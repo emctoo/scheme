@@ -27,20 +27,12 @@ pub struct SyntaxError {
 
 impl fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "SyntaxError: {} (line: {}, column: {})",
-            self.message, self.line, self.column
-        )
+        write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column)
     }
 }
 impl fmt::Debug for SyntaxError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "SyntaxError: {} (line: {}, column: {})",
-            self.message, self.line, self.column
-        )
+        write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column)
     }
 }
 
@@ -86,105 +78,93 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek(&mut self) -> Option<char> {
-        match self.chars.peek() {
-            Some(c) => Some(*c),
-            None => None,
-        }
+        self.chars.peek().map(|c| *c)
     }
 
     fn run(&mut self) -> Result<(), SyntaxError> {
         self.advance();
-        loop {
-            match self.current() {
-                Some(c) => {
-                    match c {
-                        _ if c.is_whitespace() => {
-                            self.advance();
-                        }
-                        ';' => {
-                            // comment, advance until newline
-                            self.advance();
-                            loop {
-                                match self.current() {
-                                    Some(c) if c == '\n' => {
-                                        self.advance();
-                                        break;
-                                    }
-                                    Some(_) => {
-                                        self.advance();
-                                    }
-                                    None => break,
-                                }
+        while let Some(c) = self.current() {
+            match c {
+                _ if c.is_whitespace() => {
+                    self.advance();
+                }
+                ';' => {
+                    // comment, advance until newline
+                    self.advance();
+                    loop {
+                        match self.current() {
+                            Some(c) if c == '\n' => {
+                                self.advance();
+                                break;
                             }
-                        }
-                        '(' => {
-                            self.tokens.push(Token::OpenParen);
-                            self.advance();
-                        }
-                        ')' => {
-                            self.tokens.push(Token::CloseParen);
-                            self.advance();
-                        }
-                        '\'' => {
-                            self.tokens.push(Token::Quote);
-                            self.advance();
-                        }
-                        '`' => {
-                            self.tokens.push(Token::Quasiquote);
-                            self.advance();
-                        }
-                        ',' => {
-                            self.tokens.push(Token::Unquote);
-                            self.advance();
-                        }
-                        '+' | '-' => {
-                            match self.peek() {
-                                Some('0'..='9') => {
-                                    // skip past the +/- symbol and parse the number
-                                    self.advance();
-                                    let val = self.parse_number()?;
-                                    self.tokens.push(Token::Integer(if c == '-' {
-                                        -1 * val
-                                    } else {
-                                        val
-                                    }));
-                                    self.parse_delimiter()?;
-                                }
-                                _ => {
-                                    // not followed by a digit, must be an identifier
-                                    self.tokens.push(Token::Identifier(c.to_string()));
-                                    self.advance();
-                                    self.parse_delimiter()?;
-                                }
+                            Some(_) => {
+                                self.advance();
                             }
-                        }
-                        '#' => {
-                            let val = self.parse_boolean()?;
-                            self.tokens.push(Token::Boolean(val));
-                            self.parse_delimiter()?;
-                        }
-                        '0'..='9' => {
-                            // don't advance -- let parse_number advance as needed
-                            let val = self.parse_number()?;
-                            self.tokens.push(Token::Integer(val));
-                            self.parse_delimiter()?;
-                        }
-                        '\"' => {
-                            let val = self.parse_string()?;
-                            self.tokens.push(Token::String(val));
-                            self.parse_delimiter()?;
-                        }
-                        '[' | ']' | '{' | '}' | '|' | '\\' => {
-                            syntax_error!(self, "Unexpected character: {}", c);
-                        }
-                        _ => {
-                            let val = self.parse_identifier()?;
-                            self.tokens.push(Token::Identifier(val));
-                            let _ = self.parse_delimiter();
+                            None => break,
                         }
                     }
                 }
-                None => break,
+                '(' => {
+                    self.tokens.push(Token::OpenParen);
+                    self.advance();
+                }
+                ')' => {
+                    self.tokens.push(Token::CloseParen);
+                    self.advance();
+                }
+                '\'' => {
+                    self.tokens.push(Token::Quote);
+                    self.advance();
+                }
+                '`' => {
+                    self.tokens.push(Token::Quasiquote);
+                    self.advance();
+                }
+                ',' => {
+                    self.tokens.push(Token::Unquote);
+                    self.advance();
+                }
+                '+' | '-' => {
+                    match self.peek() {
+                        Some('0'..='9') => {
+                            // skip past the +/- symbol and parse the number
+                            self.advance();
+                            let val = self.parse_number()?;
+                            self.tokens.push(Token::Integer(if c == '-' { -1 * val } else { val }));
+                            self.parse_delimiter()?;
+                        }
+                        _ => {
+                            // not followed by a digit, must be an identifier
+                            self.tokens.push(Token::Identifier(c.to_string()));
+                            self.advance();
+                            self.parse_delimiter()?;
+                        }
+                    }
+                }
+                '#' => {
+                    let val = self.parse_boolean()?;
+                    self.tokens.push(Token::Boolean(val));
+                    self.parse_delimiter()?;
+                }
+                '0'..='9' => {
+                    // don't advance -- let parse_number advance as needed
+                    let val = self.parse_number()?;
+                    self.tokens.push(Token::Integer(val));
+                    self.parse_delimiter()?;
+                }
+                '\"' => {
+                    let val = self.parse_string()?;
+                    self.tokens.push(Token::String(val));
+                    self.parse_delimiter()?;
+                }
+                '[' | ']' | '{' | '}' | '|' | '\\' => {
+                    syntax_error!(self, "Unexpected character: {}", c);
+                }
+                _ => {
+                    let val = self.parse_identifier()?;
+                    self.tokens.push(Token::Identifier(val));
+                    let _ = self.parse_delimiter();
+                }
             }
         }
         Ok(())
@@ -192,16 +172,13 @@ impl<'a> Lexer<'a> {
 
     fn parse_number(&mut self) -> Result<i64, SyntaxError> {
         let mut s = String::new();
-        loop {
-            match self.current() {
-                Some(c) => match c {
-                    '0'..='9' => {
-                        s.push(c);
-                        self.advance();
-                    }
-                    _ => break,
-                },
-                None => break,
+        while let Some(c) = self.current() {
+            match c {
+                '0'..='9' => {
+                    s.push(c);
+                    self.advance();
+                }
+                _ => break,
             }
         }
         match s.parse() {
@@ -228,33 +205,25 @@ impl<'a> Lexer<'a> {
                 Ok(false)
             }
             _ => {
-                syntax_error!(
-                    self,
-                    "Unexpected character when looking for t/f: {}",
-                    self.current().unwrap()
-                )
+                syntax_error!(self, "Unexpected character when looking for t/f: {}", self.current().unwrap())
             }
         }
     }
 
     fn parse_identifier(&mut self) -> Result<String, SyntaxError> {
         let mut s = String::new();
-        loop {
-            match self.current() {
-                Some(c) => match c {
-                    _ if c.is_whitespace() => {
-                        break;
-                    }
-                    '(' | ')' | '[' | ']' | '{' | '}' | '\"' | ',' | '\'' | '`' | ';' | '|'
-                    | '\\' => {
-                        break;
-                    }
-                    _ => {
-                        s.push(c);
-                        self.advance();
-                    }
-                },
-                None => break,
+        while let Some(c) = self.current() {
+            match c {
+                _ if c.is_whitespace() => {
+                    break;
+                }
+                '(' | ')' | '[' | ']' | '{' | '}' | '\"' | ',' | '\'' | '`' | ';' | '|' | '\\' => {
+                    break;
+                }
+                _ => {
+                    s.push(c);
+                    self.advance();
+                }
             }
         }
         Ok(s)
@@ -286,20 +255,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn parse_delimiter(&mut self) -> Result<(), SyntaxError> {
-        match self.current() {
-            Some(c) => match c {
+        if let Some(c) = self.current() {
+            match c {
                 _ if c.is_whitespace() => (),
                 ')' => {
                     self.tokens.push(Token::CloseParen);
                     self.advance();
                 }
-                _ => syntax_error!(
-                    self,
-                    "Unexpected character when looking for a delimiter: {}",
-                    c
-                ),
-            },
-            None => (),
+                _ => syntax_error!(self, "Unexpected character when looking for a delimiter: {}", c),
+            }
         };
         Ok(())
     }
@@ -371,27 +335,15 @@ fn test_lexer_booleans() {
 #[test]
 fn test_lexer_identifiers() {
     for identifier in ["*", "<", "<=", "if", "while", "$t$%*=:t059s"].iter() {
-        assert_eq!(
-            tokenize(*identifier).unwrap(),
-            vec![Token::Identifier(identifier.to_string())]
-        );
+        assert_eq!(tokenize(*identifier).unwrap(), vec![Token::Identifier(identifier.to_string())]);
     }
 }
 
 #[test]
 fn test_lexer_strings() {
-    assert_eq!(
-        tokenize("\"hello\"").unwrap(),
-        vec![Token::String("hello".to_string())]
-    );
-    assert_eq!(
-        tokenize("\"a _ $ snthoeau(*&G#$()*^!\"").unwrap(),
-        vec![Token::String("a _ $ snthoeau(*&G#$()*^!".to_string())]
-    );
-    assert_eq!(
-        tokenize("\"truncated").err().unwrap().to_string(),
-        "SyntaxError: Expected end quote, but found EOF instead (line: 1, column: 11)"
-    );
+    assert_eq!(tokenize("\"hello\"").unwrap(), vec![Token::String("hello".to_string())]);
+    assert_eq!(tokenize("\"a _ $ snthoeau(*&G#$()*^!\"").unwrap(), vec![Token::String("a _ $ snthoeau(*&G#$()*^!".to_string())]);
+    assert_eq!(tokenize("\"truncated").err().unwrap().to_string(), "SyntaxError: Expected end quote, but found EOF instead (line: 1, column: 11)");
 }
 
 #[test]
@@ -415,18 +367,12 @@ fn test_lexer_whitespace() {
 
 #[test]
 fn test_lexer_bad_syntax() {
-    assert_eq!(
-        tokenize("([)").err().unwrap().to_string(),
-        "SyntaxError: Unexpected character: [ (line: 1, column: 2)"
-    );
+    assert_eq!(tokenize("([)").err().unwrap().to_string(), "SyntaxError: Unexpected character: [ (line: 1, column: 2)");
 }
 
 #[test]
 fn test_lexer_delimiter_checking() {
-    assert_eq!(
-        tokenize("(+-)").err().unwrap().to_string(),
-        "SyntaxError: Unexpected character when looking for a delimiter: - (line: 1, column: 3)"
-    );
+    assert_eq!(tokenize("(+-)").err().unwrap().to_string(), "SyntaxError: Unexpected character when looking for a delimiter: - (line: 1, column: 3)");
 
     assert_eq!(
         tokenize("(-22+)").err().unwrap().to_string(),
@@ -446,15 +392,7 @@ fn test_lexer_delimiter_checking() {
 
 #[test]
 fn test_lexer_quoting() {
-    assert_eq!(
-        tokenize("'(a)").unwrap(),
-        vec![
-            Token::Quote,
-            Token::OpenParen,
-            Token::Identifier("a".to_string()),
-            Token::CloseParen
-        ]
-    );
+    assert_eq!(tokenize("'(a)").unwrap(), vec![Token::Quote, Token::OpenParen, Token::Identifier("a".to_string()), Token::CloseParen]);
     assert_eq!(
         tokenize("'('a 'b)").unwrap(),
         vec![
@@ -515,16 +453,7 @@ fn test_lexer_complex_code_block() {
 
 #[test]
 fn test_lexer_unicode_identifiers() {
-    assert_eq!(
-        tokenize("λ").unwrap(),
-        vec![Token::Identifier("λ".to_string())]
-    );
-    assert_eq!(
-        tokenize("★☎♫✂").unwrap(),
-        vec![Token::Identifier("★☎♫✂".to_string())]
-    );
-    assert_eq!(
-        tokenize("日本国").unwrap(),
-        vec![Token::Identifier("日本国".to_string())]
-    );
+    assert_eq!(tokenize("λ").unwrap(), vec![Token::Identifier("λ".to_string())]);
+    assert_eq!(tokenize("★☎♫✂").unwrap(), vec![Token::Identifier("★☎♫✂".to_string())]);
+    assert_eq!(tokenize("日本国").unwrap(), vec![Token::Identifier("日本国".to_string())]);
 }
