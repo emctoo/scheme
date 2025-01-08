@@ -1,7 +1,7 @@
-use crate::reader::lexer;
-use crate::reader::parser;
 use crate::interpreter::ast_walk_interpreter;
 use crate::interpreter::cps_interpreter;
+use crate::reader::lexer;
+use crate::reader::parser;
 
 #[cfg(not(test))]
 use crate::core::repl;
@@ -16,12 +16,12 @@ use std::path::Path;
 use std::io::Read;
 
 macro_rules! try_or_err_to_string {
-    ($inp:expr) => (
+    ($inp:expr) => {
         match $inp {
             Ok(v) => v,
-            Err(e) => return Err(e.to_string())
+            Err(e) => return Err(e.to_string()),
         }
-    )
+    };
 }
 
 pub fn new(t: &str) -> Interpreter {
@@ -38,7 +38,7 @@ impl Interpreter {
         match t.as_ref() {
             "cps" => Interpreter::Cps(cps_interpreter::new().unwrap()),
             "ast_walk" => Interpreter::AstWalk(ast_walk_interpreter::new()),
-            _ => panic!("Interpreter type must be 'cps' or 'ast_walk'")
+            _ => panic!("Interpreter type must be 'cps' or 'ast_walk'"),
         }
     }
 
@@ -49,10 +49,12 @@ impl Interpreter {
     }
 
     pub fn execute(&self, input: &str) -> Result<String, String> {
-        let parsed = try!(self.parse(input));
+        let parsed = self.parse(input)?;
         match *self {
-            Interpreter::AstWalk(ref i) => Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed)))),
-            Interpreter::Cps(ref i)     => Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed)))),
+            Interpreter::AstWalk(ref i) => {
+                Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed))))
+            }
+            Interpreter::Cps(ref i) => Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed)))),
         }
     }
 
@@ -69,7 +71,7 @@ impl Interpreter {
         let mut contents = String::new();
         file.read_to_string(&mut contents).unwrap();
         match self.execute(&contents) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => println!("{}", e),
         }
     }

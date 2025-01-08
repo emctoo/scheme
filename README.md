@@ -52,7 +52,3 @@ To run the test suite:
 
     cargo test
 
-To watch for changes and auto-rebuild (on OS X):
-
-    gem install kicker -s http://gemcutter.org
-    ./watch

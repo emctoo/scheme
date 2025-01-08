@@ -1,9 +1,9 @@
 use crate::reader::parser::*;
 
-use std::fmt;
-use std::collections::HashMap;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
 
 pub fn new() -> Interpreter {
     Interpreter::new()
@@ -11,12 +11,14 @@ pub fn new() -> Interpreter {
 
 #[derive(Clone)]
 pub struct Interpreter {
-    root: Rc<RefCell<Environment>>
+    root: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
     pub fn new() -> Interpreter {
-        Interpreter { root: Environment::new_root() }
+        Interpreter {
+            root: Environment::new_root(),
+        }
     }
 
     pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> {
@@ -37,7 +39,11 @@ pub enum Value {
 }
 
 // null == empty list
-macro_rules! null { () => (Value::List(vec![])) }
+macro_rules! null {
+    () => {
+        Value::List(vec![])
+    };
+}
 
 pub enum Function {
     Native(ValueOperation),
@@ -58,7 +64,7 @@ impl Value {
             Node::Integer(val) => Value::Integer(val),
             Node::Boolean(val) => Value::Boolean(val),
             Node::String(ref val) => Value::String(val.clone()),
-            Node::List(ref nodes) => Value::List(Value::from_nodes(&nodes))
+            Node::List(ref nodes) => Value::List(Value::from_nodes(&nodes)),
         }
     }
 }
@@ -67,15 +73,15 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Value::Symbol(ref val) => write!(f, "{}", val),
-            Value::Integer(val)    => write!(f, "{}", val),
-            Value::Boolean(val)    => write!(f, "#{}", if val { "t" } else { "f" }),
+            Value::Integer(val) => write!(f, "{}", val),
+            Value::Boolean(val) => write!(f, "#{}", if val { "t" } else { "f" }),
             Value::String(ref val) => write!(f, "{}", val),
-            Value::List(ref list)  => {
+            Value::List(ref list) => {
                 let strs: Vec<String> = list.iter().map(|v| format!("{}", v)).collect();
                 write!(f, "({})", &strs.join(" "))
-            },
-            Value::Procedure(_)   => write!(f, "#<procedure>"),
-            Value::Macro(_,_)     => write!(f, "#<macro>"),
+            }
+            Value::Procedure(_) => write!(f, "#<procedure>"),
+            Value::Macro(_, _) => write!(f, "#<macro>"),
         }
     }
 }
@@ -84,11 +90,11 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Value::String(ref val) => write!(f, "\"{}\"", val),
-            Value::List(ref list)  => {
+            Value::List(ref list) => {
                 let strs: Vec<String> = list.iter().map(|v| format!("{:?}", v)).collect();
                 write!(f, "({})", &strs.join(" "))
-            },
-            _                      => write!(f, "{}", self)
+            }
+            _ => write!(f, "{}", self),
         }
     }
 }
@@ -103,7 +109,9 @@ impl Clone for Function {
     fn clone(&self) -> Function {
         match *self {
             Function::Native(ref func) => Function::Native(*func),
-            Function::Scheme(ref a, ref b, ref env) => Function::Scheme(a.clone(), b.clone(), env.clone())
+            Function::Scheme(ref a, ref b, ref env) => {
+                Function::Scheme(a.clone(), b.clone(), env.clone())
+            }
         }
     }
 }
@@ -135,14 +143,20 @@ pub struct Environment {
 }
 
 /**
- * 
+ *
  */
 impl Environment {
     fn new_root() -> Rc<RefCell<Environment>> {
-        let mut env = Environment { parent: None, values: HashMap::new() };
+        let mut env = Environment {
+            parent: None,
+            values: HashMap::new(),
+        };
         let predefined_functions = &[
             ("define", Function::Native(native_define)),
-            ("define-syntax-rule", Function::Native(native_define_syntax_rule)),
+            (
+                "define-syntax-rule",
+                Function::Native(native_define_syntax_rule),
+            ),
             ("begin", Function::Native(native_begin)),
             ("let", Function::Native(native_let)),
             ("set!", Function::Native(native_set)),
@@ -174,16 +188,20 @@ impl Environment {
             ("displayln", Function::Native(native_displayln)),
             ("print", Function::Native(native_print)),
             ("newline", Function::Native(native_newline)),
-            ];
+        ];
         for item in predefined_functions.iter() {
             let (name, ref func) = *item;
-            env.define(name.to_string(), Value::Procedure(func.clone())).unwrap();
+            env.define(name.to_string(), Value::Procedure(func.clone()))
+                .unwrap();
         }
         Rc::new(RefCell::new(env))
     }
 
     fn new_child(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-        let env = Environment { parent: Some(parent), values: HashMap::new() };
+        let env = Environment {
+            parent: Some(parent),
+            values: HashMap::new(),
+        };
         Rc::new(RefCell::new(env))
     }
 
@@ -201,7 +219,7 @@ impl Environment {
     }
 
     // Set a variable to a value, at any level in the env, or throw a runtime error if it isn't defined at all
-    fn set(&mut self, key: String, value: Value) -> Result<(), RuntimeError>  {
+    fn set(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
         if self.values.contains_key(&key) {
             self.values.insert(key, value);
             Ok(())
@@ -209,7 +227,7 @@ impl Environment {
             // recurse up the environment tree until a value is found or the end is reached
             match self.parent {
                 Some(ref parent) => parent.borrow_mut().set(key, value),
-                None => runtime_error!("Can't set! an undefined variable: {:?}", key)
+                None => runtime_error!("Can't set! an undefined variable: {:?}", key),
             }
         }
     }
@@ -221,7 +239,7 @@ impl Environment {
                 // recurse up the environment tree until a value is found or the end is reached
                 match self.parent {
                     Some(ref parent) => parent.borrow().get(key),
-                    None => None
+                    None => None,
                 }
             }
         }
@@ -231,7 +249,7 @@ impl Environment {
         let env = env_ref.borrow();
         match env.parent {
             Some(ref parent) => Environment::get_root(parent.clone()),
-            None => env_ref.clone()
+            None => env_ref.clone(),
         }
     }
 }
@@ -239,18 +257,16 @@ impl Environment {
 fn evaluate_values(values: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     let mut res = null!();
     for v in values.iter() {
-        res = try!(evaluate_value(v, env.clone()));
+        res = evaluate_value(v, env.clone())?;
     }
     Ok(res)
 }
 
 fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match value {
-        &Value::Symbol(ref v) => {
-            match env.borrow().get(v) {
-                Some(val) => Ok(val),
-                None => runtime_error!("Identifier not found: {:?}", value)
-            }
+        &Value::Symbol(ref v) => match env.borrow().get(v) {
+            Some(val) => Ok(val),
+            None => runtime_error!("Identifier not found: {:?}", value),
         },
         &Value::Integer(v) => Ok(Value::Integer(v)),
         &Value::Boolean(v) => Ok(Value::Boolean(v)),
@@ -261,13 +277,17 @@ fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value,
             } else {
                 Ok(null!())
             }
-        },
+        }
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
     }
 }
 
-fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn quote_value(
+    value: &Value,
+    quasi: bool,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     match value {
         &Value::Symbol(ref v) => Ok(Value::Symbol(v.clone())),
         &Value::Integer(v) => Ok(Value::Integer(v)),
@@ -281,43 +301,58 @@ fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Res
                 }
                 evaluate_value(&vec[1], env.clone())
             } else {
-                let res: Result<Vec<Value>, RuntimeError> = vec.iter().map(|v| quote_value(v, quasi, env.clone())).collect();
-                let new_vec = try!(res);
+                let res: Result<Vec<Value>, RuntimeError> = vec
+                    .iter()
+                    .map(|v| quote_value(v, quasi, env.clone()))
+                    .collect();
+                let new_vec = res?;
                 Ok(Value::List(new_vec))
             }
-        },
+        }
         &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
         &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
     }
 }
 
-fn evaluate_expression(values: &Vec<Value>, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn evaluate_expression(
+    values: &Vec<Value>,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     if values.len() == 0 {
         runtime_error!("Can't evaluate an empty expression: {:?}", values);
     }
-    let first = try!(evaluate_value(&values[0], env.clone()));
+    let first = evaluate_value(&values[0], env.clone())?;
     match first {
         Value::Procedure(f) => apply_function(&f, &values[1..], env.clone()),
         Value::Macro(a, b) => expand_macro(a, b, &values[1..], env.clone()),
-        _ => runtime_error!("First element in an expression must be a procedure: {:?}", first)
+        _ => runtime_error!(
+            "First element in an expression must be a procedure: {:?}",
+            first
+        ),
     }
 }
 
-fn apply_function(func: &Function, args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn apply_function(
+    func: &Function,
+    args: &[Value],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     match func {
-        &Function::Native(native_fn) => {
-            native_fn(args, env)
-        },
+        &Function::Native(native_fn) => native_fn(args, env),
         &Function::Scheme(ref arg_names, ref body, ref func_env) => {
             if arg_names.len() != args.len() {
-                runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
+                runtime_error!(
+                    "Must supply exactly {} arguments to function: {:?}",
+                    arg_names.len(),
+                    args
+                );
             }
 
             // create a new, child environment for the procedure and define the arguments as local variables
             let proc_env = Environment::new_child(func_env.clone());
             for (name, arg) in arg_names.iter().zip(args.iter()) {
-                let val = try!(evaluate_value(arg, env.clone()));
-                try!(proc_env.borrow_mut().define(name.clone(), val));
+                let val = evaluate_value(arg, env.clone())?;
+                proc_env.borrow_mut().define(name.clone(), val)?;
             }
 
             // evaluate procedure body with new environment with procedure environment as parent
@@ -327,20 +362,34 @@ fn apply_function(func: &Function, args: &[Value], env: Rc<RefCell<Environment>>
     }
 }
 
-fn expand_macro(arg_names: Vec<String>, body: Vec<Value>, args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn expand_macro(
+    arg_names: Vec<String>,
+    body: Vec<Value>,
+    args: &[Value],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     let mut substitutions = HashMap::new();
     for (name, arg) in arg_names.iter().zip(args.iter()) {
         substitutions.insert(name.clone(), arg.clone());
     }
-    let expanded = try!(expand_macro_substitute_values(&body, substitutions));
+    let expanded = expand_macro_substitute_values(&body, substitutions)?;
     evaluate_values(&expanded, env)
 }
 
-fn expand_macro_substitute_values(values: &[Value], substitutions: HashMap<String,Value>) -> Result<Vec<Value>, RuntimeError> {
-    values.iter().map(|n| expand_macro_substitute_value(n, substitutions.clone())).collect()
+fn expand_macro_substitute_values(
+    values: &[Value],
+    substitutions: HashMap<String, Value>,
+) -> Result<Vec<Value>, RuntimeError> {
+    values
+        .iter()
+        .map(|n| expand_macro_substitute_value(n, substitutions.clone()))
+        .collect()
 }
 
-fn expand_macro_substitute_value(value: &Value, substitutions: HashMap<String,Value>) -> Result<Value, RuntimeError> {
+fn expand_macro_substitute_value(
+    value: &Value,
+    substitutions: HashMap<String, Value>,
+) -> Result<Value, RuntimeError> {
     let res = match value {
         &Value::Symbol(ref s) => {
             if substitutions.contains_key(s) {
@@ -348,11 +397,9 @@ fn expand_macro_substitute_value(value: &Value, substitutions: HashMap<String,Va
             } else {
                 Value::Symbol(s.clone())
             }
-        },
-        &Value::List(ref l) => {
-            Value::List(try!(expand_macro_substitute_values(&l, substitutions)))
-        },
-        other => other.clone()
+        }
+        &Value::List(ref l) => Value::List(expand_macro_substitute_values(&l, substitutions)?),
+        other => other.clone(),
     };
     Ok(res)
 }
@@ -363,64 +410,88 @@ fn native_define(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
     }
     let (name, val) = match args[0] {
         Value::Symbol(ref name) => {
-            let val = try!(evaluate_value(&args[1], env.clone()));
+            let val = evaluate_value(&args[1], env.clone())?;
             (name, val)
-        },
+        }
         Value::List(ref list) => {
             // if a list is the second argument, it's shortcut for defining a procedure
             // (define (<name> <args>) <body>) == (define <name> (lambda (<args>) <body>)
             if list.len() < 1 {
-                runtime_error!("Must supply at least one argument in list part of define: {:?}", list);
+                runtime_error!(
+                    "Must supply at least one argument in list part of define: {:?}",
+                    list
+                );
             }
             match list[0] {
                 Value::Symbol(ref name) => {
-                    let res: Result<Vec<String>, RuntimeError> = (&list[1..]).iter().map(|i| match *i {
-                        Value::Symbol(ref s) => Ok(s.clone()),
-                        _ => runtime_error!("Unexpected argument in define arguments: {:?}", i)
-                    }).collect();
-                    let arg_names = try!(res);
+                    let res: Result<Vec<String>, RuntimeError> = (&list[1..])
+                        .iter()
+                        .map(|i| match *i {
+                            Value::Symbol(ref s) => Ok(s.clone()),
+                            _ => runtime_error!("Unexpected argument in define arguments: {:?}", i),
+                        })
+                        .collect();
+                    let arg_names = res?;
                     let body = (&args[1..]).to_vec();
                     let val = Value::Procedure(Function::Scheme(arg_names, body, env.clone()));
                     (name, val)
-                },
-                _ => runtime_error!("Must supply a symbol in list part of define: {:?}", list)
+                }
+                _ => runtime_error!("Must supply a symbol in list part of define: {:?}", list),
             }
-        },
-        _ => runtime_error!("Unexpected value for name in define: {:?}", args)
+        }
+        _ => runtime_error!("Unexpected value for name in define: {:?}", args),
     };
 
-    try!(env.borrow_mut().define(name.clone(), val));
+    env.borrow_mut().define(name.clone(), val)?;
     Ok(null!())
 }
 
-fn native_define_syntax_rule(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn native_define_syntax_rule(
+    args: &[Value],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        runtime_error!("Must supply exactly two arguments to define-syntax-rule: {:?}", args);
+        runtime_error!(
+            "Must supply exactly two arguments to define-syntax-rule: {:?}",
+            args
+        );
     }
     let (name, val) = match args[0] {
         Value::List(ref list) => {
             // (define-syntax-rule (<name> <args>) <template>)
             if list.len() < 1 {
-                runtime_error!("Must supply at least one argument in list part of define-syntax-rule: {:?}", list);
+                runtime_error!(
+                    "Must supply at least one argument in list part of define-syntax-rule: {:?}",
+                    list
+                );
             }
             match list[0] {
                 Value::Symbol(ref name) => {
-                    let res: Result<Vec<String>, RuntimeError> = (&list[1..]).iter().map(|i| match *i {
-                        Value::Symbol(ref s) => Ok(s.clone()),
-                        _ => runtime_error!("Unexpected argument in define-syntax-rule arguments: {:?}", i)
-                    }).collect();
-                    let arg_names = try!(res);
+                    let res: Result<Vec<String>, RuntimeError> = (&list[1..])
+                        .iter()
+                        .map(|i| match *i {
+                            Value::Symbol(ref s) => Ok(s.clone()),
+                            _ => runtime_error!(
+                                "Unexpected argument in define-syntax-rule arguments: {:?}",
+                                i
+                            ),
+                        })
+                        .collect();
+                    let arg_names = res?;
                     let body = (&args[1..]).to_vec();
                     let val = Value::Macro(arg_names, body);
                     (name, val)
-                },
-                _ => runtime_error!("Must supply a symbol in list part of define: {:?}", list)
+                }
+                _ => runtime_error!("Must supply a symbol in list part of define: {:?}", list),
             }
-        },
-        _ => runtime_error!("Unexpected value for pattern in define-syntax-rule: {:?}", args)
+        }
+        _ => runtime_error!(
+            "Unexpected value for pattern in define-syntax-rule: {:?}",
+            args
+        ),
     };
 
-    try!(env.borrow_mut().define(name.clone(), val));
+    env.borrow_mut().define(name.clone(), val)?;
     Ok(null!())
 }
 
@@ -444,20 +515,23 @@ fn native_let(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
                 match *i {
                     Value::List(ref entry) => {
                         if entry.len() != 2 {
-                            runtime_error!("let expression values must have exactly 2 params: {:?}", entry);
+                            runtime_error!(
+                                "let expression values must have exactly 2 params: {:?}",
+                                entry
+                            );
                         }
                         let name = match entry[0] {
                             Value::Symbol(ref x) => x,
-                            _ => runtime_error!("Unexpected value for name in set!: {:?}", args)
+                            _ => runtime_error!("Unexpected value for name in set!: {:?}", args),
                         };
-                        let val = try!(evaluate_value(&entry[1], env.clone()));
-                        try!(let_env.borrow_mut().define(name.clone(), val));
-                    },
-                    _ => runtime_error!("Unexpected value inside expression in let: {:?}", i)
+                        let val = evaluate_value(&entry[1], env.clone())?;
+                        let_env.borrow_mut().define(name.clone(), val)?;
+                    }
+                    _ => runtime_error!("Unexpected value inside expression in let: {:?}", i),
                 }
             }
-        },
-        _ => runtime_error!("Unexpected value for expressions in let: {:?}", args)
+        }
+        _ => runtime_error!("Unexpected value for expressions in let: {:?}", args),
     };
 
     // evaluate let statement body with new environment with let environment as parent
@@ -472,10 +546,10 @@ fn native_set(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
     }
     let name = match args[0] {
         Value::Symbol(ref x) => x,
-        _ => runtime_error!("Unexpected value for name in set!: {:?}", args)
+        _ => runtime_error!("Unexpected value for name in set!: {:?}", args),
     };
-    let val = try!(evaluate_value(&args[1], env.clone()));
-    try!(env.borrow_mut().set(name.clone(), val));
+    let val = evaluate_value(&args[1], env.clone())?;
+    env.borrow_mut().set(name.clone(), val)?;
     Ok(null!())
 }
 
@@ -485,26 +559,33 @@ fn native_lambda(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
     }
     let arg_names = match args[0] {
         Value::List(ref list) => {
-            let res: Result<Vec<String>, RuntimeError> = list.iter().map(|i| match *i {
-                Value::Symbol(ref s) => Ok(s.clone()),
-                _ => runtime_error!("Unexpected argument in lambda arguments: {:?}", i)
-            }).collect();
-            try!(res)
+            let res: Result<Vec<String>, RuntimeError> = list
+                .iter()
+                .map(|i| match *i {
+                    Value::Symbol(ref s) => Ok(s.clone()),
+                    _ => runtime_error!("Unexpected argument in lambda arguments: {:?}", i),
+                })
+                .collect();
+            res?
         }
-        _ => runtime_error!("Unexpected value for arguments in lambda: {:?}", args)
+        _ => runtime_error!("Unexpected value for arguments in lambda: {:?}", args),
     };
     let body = (&args[1..]).to_vec();
-    Ok(Value::Procedure(Function::Scheme(arg_names, body, env.clone())))
+    Ok(Value::Procedure(Function::Scheme(
+        arg_names,
+        body,
+        env.clone(),
+    )))
 }
 
 fn native_if(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         runtime_error!("Must supply exactly three arguments to if: {:?}", args);
     }
-    let condition = try!(evaluate_value(&args[0], env.clone()));
+    let condition = evaluate_value(&args[0], env.clone())?;
     match condition {
         Value::Boolean(false) => evaluate_value(&args[2], env.clone()),
-        _ => evaluate_value(&args[1], env.clone())
+        _ => evaluate_value(&args[1], env.clone()),
     }
 }
 
@@ -514,12 +595,12 @@ fn native_plus(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
     }
     let mut sum = 0;
     for n in args.iter() {
-        let v = try!(evaluate_value(n, env.clone()));
+        let v = evaluate_value(n, env.clone())?;
         match v {
             Value::Integer(x) => sum += x,
-            _ => runtime_error!("Unexpected value during +: {:?}", n)
+            _ => runtime_error!("Unexpected value during +: {:?}", n),
         };
-    };
+    }
     Ok(Value::Integer(sum))
 }
 
@@ -527,15 +608,15 @@ fn native_minus(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to -: {:?}", args);
     }
-    let l = try!(evaluate_value(&args[0], env.clone()));
-    let r = try!(evaluate_value(&args[1], env.clone()));
+    let l = evaluate_value(&args[0], env.clone())?;
+    let r = evaluate_value(&args[1], env.clone())?;
     let mut result = match l {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during -: {:?}", args)
+        _ => runtime_error!("Unexpected value during -: {:?}", args),
     };
     result -= match r {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during -: {:?}", args)
+        _ => runtime_error!("Unexpected value during -: {:?}", args),
     };
     Ok(Value::Integer(result))
 }
@@ -546,12 +627,12 @@ fn native_multiply(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Valu
     }
     let mut product = 1;
     for n in args.iter() {
-        let v = try!(evaluate_value(n, env.clone()));
+        let v = evaluate_value(n, env.clone())?;
         match v {
             Value::Integer(x) => product *= x,
-            _ => runtime_error!("Unexpected value during *: {:?}", n)
+            _ => runtime_error!("Unexpected value during *: {:?}", n),
         };
-    };
+    }
     Ok(Value::Integer(product))
 }
 
@@ -559,15 +640,15 @@ fn native_divide(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to /: {:?}", args);
     }
-    let l = try!(evaluate_value(&args[0], env.clone()));
-    let r = try!(evaluate_value(&args[1], env.clone()));
+    let l = evaluate_value(&args[0], env.clone())?;
+    let r = evaluate_value(&args[1], env.clone())?;
     let mut result = match l {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during /: {:?}", args)
+        _ => runtime_error!("Unexpected value during /: {:?}", args),
     };
     result /= match r {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during /: {:?}", args)
+        _ => runtime_error!("Unexpected value during /: {:?}", args),
     };
     Ok(Value::Integer(result))
 }
@@ -576,32 +657,35 @@ fn native_lessthan(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Valu
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to <: {:?}", args);
     }
-    let l_raw = try!(evaluate_value(&args[0], env.clone()));
-    let r_raw = try!(evaluate_value(&args[1], env.clone()));
+    let l_raw = evaluate_value(&args[0], env.clone())?;
+    let r_raw = evaluate_value(&args[1], env.clone())?;
     let l = match l_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during <: {:?}", args)
+        _ => runtime_error!("Unexpected value during <: {:?}", args),
     };
     let r = match r_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during <: {:?}", args)
+        _ => runtime_error!("Unexpected value during <: {:?}", args),
     };
     Ok(Value::Boolean(l < r))
 }
 
-fn native_greaterthan(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+fn native_greaterthan(
+    args: &[Value],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to >: {:?}", args);
     }
-    let l_raw = try!(evaluate_value(&args[0], env.clone()));
-    let r_raw = try!(evaluate_value(&args[1], env.clone()));
+    let l_raw = evaluate_value(&args[0], env.clone())?;
+    let r_raw = evaluate_value(&args[1], env.clone())?;
     let l = match l_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during >: {:?}", args)
+        _ => runtime_error!("Unexpected value during >: {:?}", args),
     };
     let r = match r_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during >: {:?}", args)
+        _ => runtime_error!("Unexpected value during >: {:?}", args),
     };
     Ok(Value::Boolean(l > r))
 }
@@ -610,15 +694,15 @@ fn native_equal(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to =: {:?}", args);
     }
-    let l_raw = try!(evaluate_value(&args[0], env.clone()));
-    let r_raw = try!(evaluate_value(&args[1], env.clone()));
+    let l_raw = evaluate_value(&args[0], env.clone())?;
+    let r_raw = evaluate_value(&args[1], env.clone())?;
     let l = match l_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during =: {:?}", args)
+        _ => runtime_error!("Unexpected value during =: {:?}", args),
     };
     let r = match r_raw {
         Value::Integer(x) => x,
-        _ => runtime_error!("Unexpected value during =: {:?}", args)
+        _ => runtime_error!("Unexpected value during =: {:?}", args),
     };
     Ok(Value::Boolean(l == r))
 }
@@ -626,10 +710,10 @@ fn native_equal(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
 fn native_and(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     let mut res = Value::Boolean(true);
     for n in args.iter() {
-        let v = try!(evaluate_value(n, env.clone()));
+        let v = evaluate_value(n, env.clone())?;
         match v {
             Value::Boolean(false) => return Ok(Value::Boolean(false)),
-            _ => res = v
+            _ => res = v,
         }
     }
     Ok(res)
@@ -637,10 +721,10 @@ fn native_and(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
 
 fn native_or(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     for n in args.iter() {
-        let v = try!(evaluate_value(n, env.clone()));
+        let v = evaluate_value(n, env.clone())?;
         match v {
             Value::Boolean(false) => (),
-            _ => return Ok(v)
+            _ => return Ok(v),
         }
     }
     Ok(Value::Boolean(false))
@@ -650,16 +734,19 @@ fn native_null(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
     if args.len() != 1 {
         runtime_error!("Must supply exactly one argument to null?: {:?}", args);
     }
-    let v = try!(evaluate_value(&args[0], env.clone()));
+    let v = evaluate_value(&args[0], env.clone())?;
     match v {
         Value::List(l) => Ok(Value::Boolean(l.len() == 0)),
-        _ => Ok(Value::Boolean(false))
+        _ => Ok(Value::Boolean(false)),
     }
 }
 
 fn native_list(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
-    let res: Result<Vec<Value>, RuntimeError> = args.iter().map(|n| evaluate_value(n, env.clone())).collect();
-    let elements = try!(res);
+    let res: Result<Vec<Value>, RuntimeError> = args
+        .iter()
+        .map(|n| evaluate_value(n, env.clone()))
+        .collect();
+    let elements = res?;
     Ok(Value::List(elements))
 }
 
@@ -667,7 +754,7 @@ fn native_car(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
     if args.len() != 1 {
         runtime_error!("Must supply exactly one argument to car: {:?}", args);
     }
-    let v = try!(evaluate_value(&args[0], env.clone()));
+    let v = evaluate_value(&args[0], env.clone())?;
     match v {
         Value::List(mut l) => {
             if l.len() > 0 {
@@ -676,7 +763,7 @@ fn native_car(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
                 runtime_error!("Can't run car on an empty list")
             }
         }
-        _ => runtime_error!("Must supply a list to car")
+        _ => runtime_error!("Must supply a list to car"),
     }
 }
 
@@ -684,7 +771,7 @@ fn native_cdr(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
     if args.len() != 1 {
         runtime_error!("Must supply exactly one argument to cdr: {:?}", args);
     }
-    let v = try!(evaluate_value(&args[0], env.clone()));
+    let v = evaluate_value(&args[0], env.clone())?;
     match v {
         Value::List(mut l) => {
             if l.len() > 0 {
@@ -694,7 +781,7 @@ fn native_cdr(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
                 runtime_error!("Can't run cdr on an empty list")
             }
         }
-        _ => runtime_error!("Must supply a list to cdr")
+        _ => runtime_error!("Must supply a list to cdr"),
     }
 }
 
@@ -703,17 +790,17 @@ fn native_cons(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
         runtime_error!("Must supply exactly two arguments to cons: {:?}", args);
     }
 
-    let first = try!(evaluate_value(&args[0], env.clone()));
-    let second = try!(evaluate_value(&args[1], env.clone()));
+    let first = evaluate_value(&args[0], env.clone())?;
+    let second = evaluate_value(&args[1], env.clone())?;
     match second {
         Value::List(elements) => {
             let mut new_elements = vec![first];
             for e in elements.into_iter() {
                 new_elements.push(e);
             }
-            return Ok(Value::List(new_elements))
+            return Ok(Value::List(new_elements));
         }
-        _ => runtime_error!("Second argument to cons must be a list: {:?}", second)
+        _ => runtime_error!("Second argument to cons must be a list: {:?}", second),
     }
 }
 
@@ -722,20 +809,20 @@ fn native_append(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
         runtime_error!("Must supply exactly two arguments to append: {:?}", args);
     }
 
-    let first = try!(evaluate_value(&args[0], env.clone()));
-    let second = try!(evaluate_value(&args[1], env.clone()));
+    let first = evaluate_value(&args[0], env.clone())?;
+    let second = evaluate_value(&args[1], env.clone())?;
     let mut first_vec = match first {
         Value::List(elements) => elements,
-        _ => runtime_error!("First argument to append must be a list: {:?}", first)
+        _ => runtime_error!("First argument to append must be a list: {:?}", first),
     };
     let second_vec = match second {
         Value::List(elements) => elements,
-        _ => runtime_error!("Second argument to append must be a list: {:?}", second)
+        _ => runtime_error!("Second argument to append must be a list: {:?}", second),
     };
     for e in second_vec.into_iter() {
         first_vec.push(e);
     }
-    return Ok(Value::List(first_vec))
+    return Ok(Value::List(first_vec));
 }
 
 fn native_quote(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
@@ -756,7 +843,7 @@ fn native_error(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
     if args.len() != 1 {
         runtime_error!("Must supply exactly one arguments to error: {:?}", args);
     }
-    let e = try!(evaluate_value(&args[0], env.clone()));
+    let e = evaluate_value(&args[0], env.clone())?;
     runtime_error!("{:?}", e);
 }
 
@@ -764,13 +851,16 @@ fn native_apply(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to apply: {:?}", args);
     }
-    let func = match try!(evaluate_value(&args[0], env.clone())) {
+    let func = match evaluate_value(&args[0], env.clone())? {
         Value::Procedure(func) => func,
-        _ => runtime_error!("First argument to apply must be a procedure: {:?}", args)
+        _ => runtime_error!("First argument to apply must be a procedure: {:?}", args),
     };
-    let func_args = match try!(evaluate_value(&args[1], env.clone())) {
+    let func_args = match evaluate_value(&args[1], env.clone())? {
         Value::List(func_args) => func_args,
-        _ => runtime_error!("Second argument to apply must be a list of arguments: {:?}", args)
+        _ => runtime_error!(
+            "Second argument to apply must be a list of arguments: {:?}",
+            args
+        ),
     };
     apply_function(&func, &func_args, env.clone())
 }
@@ -781,7 +871,7 @@ fn native_eval(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
     }
 
     // eval is basically just a double-evaluation -- the first evaluate returns the data using the local envirnoment, and the second evaluate evaluates the data as code using the global environment
-    let res = try!(evaluate_value(&args[0], env.clone()));
+    let res = evaluate_value(&args[0], env.clone())?;
     evaluate_value(&res, Environment::get_root(env))
 }
 
@@ -790,7 +880,7 @@ fn native_write(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
         runtime_error!("Must supply exactly one argument to write: {:?}", args);
     }
 
-    let val = try!(evaluate_value(&args[0], env.clone()));
+    let val = evaluate_value(&args[0], env.clone())?;
     print!("{:?}", val);
     Ok(null!())
 }
@@ -800,7 +890,7 @@ fn native_display(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value
         runtime_error!("Must supply exactly one argument to display: {:?}", args);
     }
 
-    let val = try!(evaluate_value(&args[0], env.clone()));
+    let val = evaluate_value(&args[0], env.clone())?;
     print!("{}", val);
     Ok(null!())
 }
@@ -810,7 +900,7 @@ fn native_displayln(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Val
         runtime_error!("Must supply exactly one argument to displayln: {:?}", args);
     }
 
-    let val = try!(evaluate_value(&args[0], env.clone()));
+    let val = evaluate_value(&args[0], env.clone())?;
     println!("{}", val);
     Ok(null!())
 }
@@ -820,10 +910,10 @@ fn native_print(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
         runtime_error!("Must supply exactly one argument to print: {:?}", args);
     }
 
-    let val = try!(evaluate_value(&args[0], env.clone()));
+    let val = evaluate_value(&args[0], env.clone())?;
     match val {
         Value::Symbol(_) | Value::List(_) => print!("'{:?}", val),
-        _ => print!("{:?}", val)
+        _ => print!("{:?}", val),
     }
     Ok(null!())
 }
@@ -839,12 +929,50 @@ fn native_newline(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value
 
 #[test]
 fn test_interpreter_global_variables() {
-    assert_eq!(new().run(&[Node::List(vec![Node::Identifier("define".to_string()), Node::Identifier("x".to_string()), Node::Integer(2)]), Node::List(vec![Node::Identifier("+".to_string()), Node::Identifier("x".to_string()), Node::Identifier("x".to_string()), Node::Identifier("x".to_string())])]).unwrap(),
-               Value::Integer(6));
+    assert_eq!(
+        new()
+            .run(&[
+                Node::List(vec![
+                    Node::Identifier("define".to_string()),
+                    Node::Identifier("x".to_string()),
+                    Node::Integer(2)
+                ]),
+                Node::List(vec![
+                    Node::Identifier("+".to_string()),
+                    Node::Identifier("x".to_string()),
+                    Node::Identifier("x".to_string()),
+                    Node::Identifier("x".to_string())
+                ])
+            ])
+            .unwrap(),
+        Value::Integer(6)
+    );
 }
 
 #[test]
 fn test_interpreter_global_function_definition() {
-    assert_eq!(new().run(&[Node::List(vec![Node::Identifier("define".to_string()), Node::Identifier("double".to_string()), Node::List(vec![Node::Identifier("lambda".to_string()), Node::List(vec![Node::Identifier("x".to_string())]), Node::List(vec![Node::Identifier("+".to_string()), Node::Identifier("x".to_string()), Node::Identifier("x".to_string())])])]), Node::List(vec![Node::Identifier("double".to_string()), Node::Integer(8)])]).unwrap(),
-               Value::Integer(16));
+    assert_eq!(
+        new()
+            .run(&[
+                Node::List(vec![
+                    Node::Identifier("define".to_string()),
+                    Node::Identifier("double".to_string()),
+                    Node::List(vec![
+                        Node::Identifier("lambda".to_string()),
+                        Node::List(vec![Node::Identifier("x".to_string())]),
+                        Node::List(vec![
+                            Node::Identifier("+".to_string()),
+                            Node::Identifier("x".to_string()),
+                            Node::Identifier("x".to_string())
+                        ])
+                    ])
+                ]),
+                Node::List(vec![
+                    Node::Identifier("double".to_string()),
+                    Node::Integer(8)
+                ])
+            ])
+            .unwrap(),
+        Value::Integer(16)
+    );
 }

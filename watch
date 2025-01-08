@@ -1,2 +1,0 @@
-#!/bin/sh
-kicker -e "cargo test" -c -l 0.1 src/*.rs
