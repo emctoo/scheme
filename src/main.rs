@@ -1,7 +1,4 @@
-extern crate clap;
-extern crate rusty_scheme;
-
-use rusty_scheme::interpreter::interpreter;
+use scheme::interpreter::interpreter;
 
 // #[cfg(not(test))]
 use clap::{Arg, Command};
