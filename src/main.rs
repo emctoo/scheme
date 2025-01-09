@@ -1,10 +1,56 @@
-use scheme::interpreter::interpreter;
+extern crate libc;
 
-// #[cfg(not(test))]
 use clap::{Arg, Command};
+use scheme::interpreter::interpreter::{self};
+use std::ffi::CStr;
+use std::ffi::CString;
+use std::{fs::File, io::Read, path::Path};
+
+#[link(name = "readline")]
+extern "C" {
+    fn readline(prompt: *const libc::c_char) -> *const libc::c_char;
+    fn add_history(entry: *const libc::c_char);
+}
+
+fn prompt_for_input(prompt: &str) -> Option<String> {
+    let prompt_c_str = CString::new(prompt).unwrap();
+
+    unsafe {
+        // wait for enter/CTRL-C/CTRL-D
+        let raw = readline(prompt_c_str.as_ptr());
+        if raw.is_null() {
+            return None;
+        }
+
+        // parse into String and return
+        let buf = CStr::from_ptr(raw).to_bytes();
+        let cs = String::from_utf8(buf.to_vec()).unwrap();
+
+        // add to shell history unless it's an empty string
+        if !cs.is_empty() {
+            add_history(raw);
+        }
+
+        Some(cs)
+    }
+}
+
+fn start<F: Fn(String) -> Result<String, String>>(prompt: &str, f: F) {
+    loop {
+        match prompt_for_input(prompt) {
+            Some(input) => {
+                if !input.is_empty() {
+                    let result = f(input);
+                    println!("{}", result.unwrap_or_else(|e| e));
+                }
+            }
+            None => return,
+        };
+    }
+}
 
 fn main() {
-    let matches = Command::new("RustyScheme")
+    let matches = Command::new("Scheme")
         .arg(
             Arg::new("type")
                 .short('t')
@@ -20,8 +66,17 @@ fn main() {
     let interpreter = interpreter::new(interpreter_type);
 
     match matches.get_one::<String>("file") {
-        Some(file) => interpreter.run_file(file),
-        None => interpreter.start_repl(),
+        Some(filename) => {
+            let path = Path::new(&filename);
+            let mut file = File::open(path).unwrap();
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap();
+            match interpreter.execute(&contents) {
+                Ok(_) => {}
+                Err(e) => println!("{}", e),
+            }
+        }
+        None => start("> ", |code| interpreter.execute(&code)),
     }
 }
 
