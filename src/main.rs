@@ -29,69 +29,73 @@ macro_rules! test {
     ($name:ident, $src:expr, $res:expr) => {
         #[test]
         fn $name() {
-            assert_execute_all!($src, $res);
+            // assert_execute_all!($src, $res);
+            assert_eq!(interpreter::new("ast_walk").execute($src).unwrap(), $res);
+            assert_eq!(interpreter::new("cps").execute($src).unwrap(), $res);
         }
-    };
-    ($name:ident, $src:expr, $res:expr, cps) => {
-        #[test]
-        fn $name() {
-            assert_execute_cps!($src, $res);
-        }
-    };
+    }; // ($name:ident, $src:expr, $res:expr, cps) => {
+       //     #[test]
+       //     fn $name() {
+       //         // assert_execute_cps!($src, $res);
+       //         assert_eq!(interpreter::new("cps").execute($src).unwrap(), $res);
+       //     }
+       // };
 }
 
 macro_rules! test_fail {
     ($name:ident, $src:expr, $res:expr) => {
         #[test]
         fn $name() {
-            assert_execute_fail_all!($src, $res);
+            // assert_execute_fail_all!($src, $res);
+            assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res);
+            assert_eq!(interpreter::new("cps").execute($src).err().unwrap(), $res);
         }
-    };
-    ($name:ident, $src:expr, $res:expr, cps) => {
-        #[test]
-        fn $name() {
-            assert_execute_fail_cps!($src, $res);
-        }
-    };
+    }; // ($name:ident, $src:expr, $res:expr, cps) => {
+       //     #[test]
+       //     fn $name() {
+       //         // assert_execute_fail_cps!($src, $res);
+       //         assert_eq!(interpreter::new("cps").execute($src).err().unwrap(), $res);
+       //     }
+       // };
 }
 
-macro_rules! assert_execute_all {
-    ($src:expr, $res:expr) => {
-        assert_execute_ast_walk!($src, $res);
-        assert_execute_cps!($src, $res);
-    };
-}
+// macro_rules! assert_execute_all {
+//     ($src:expr, $res:expr) => {
+//         assert_execute_ast_walk!($src, $res);
+//         assert_execute_cps!($src, $res);
+//     };
+// }
 
-macro_rules! assert_execute_fail_all {
-    ($src:expr, $res:expr) => {
-        assert_execute_fail_ast_walk!($src, $res);
-        assert_execute_fail_cps!($src, $res);
-    };
-}
+// macro_rules! assert_execute_fail_all {
+//     ($src:expr, $res:expr) => {
+//         assert_execute_fail_ast_walk!($src, $res);
+//         assert_execute_fail_cps!($src, $res);
+//     };
+// }
 
-macro_rules! assert_execute_ast_walk {
-    ($src:expr, $res:expr) => {
-        assert_eq!(interpreter::new("ast_walk").execute($src).unwrap(), $res)
-    };
-}
+// macro_rules! assert_execute_ast_walk {
+//     ($src:expr, $res:expr) => {
+//         assert_eq!(interpreter::new("ast_walk").execute($src).unwrap(), $res)
+//     };
+// }
 
-macro_rules! assert_execute_fail_ast_walk {
-    ($src:expr, $res:expr) => {
-        assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res)
-    };
-}
+// macro_rules! assert_execute_fail_ast_walk {
+//     ($src:expr, $res:expr) => {
+//         assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res)
+//     };
+// }
 
-macro_rules! assert_execute_cps {
-    ($src:expr, $res:expr) => {
-        assert_eq!(interpreter::new("cps").execute($src).unwrap(), $res)
-    };
-}
+// macro_rules! assert_execute_cps {
+//     ($src:expr, $res:expr) => {
+//         assert_eq!(interpreter::new("cps").execute($src).unwrap(), $res)
+//     };
+// }
 
-macro_rules! assert_execute_fail_cps {
-    ($src:expr, $res:expr) => {
-        assert_eq!(interpreter::new("cps").execute($src).err().unwrap(), $res)
-    };
-}
+// macro_rules! assert_execute_fail_cps {
+//     ($src:expr, $res:expr) => {
+//         assert_eq!(interpreter::new("cps").execute($src).err().unwrap(), $res)
+//     };
+// }
 
 test!(identity1, "1", "1");
 test!(identity2, "#f", "#f");
@@ -283,7 +287,15 @@ test!(multiline1, "(define x 3)\n(define y 4)\n(+ x y)", "7");
 
 test!(comment1, "(define x 3)\n(define y 4)\n;(set! y 5)\n(+ x y); (+ x y)", "7");
 
-test!(tail_call_optimization1, "(define (f i) (if (= i 1000) '() (f (+ i 1)))) (f 1)", "()", cps);
-
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use crate::interpreter;
+
+    #[test]
+    fn test_tail_call() {
+        // test!(tail_call_optimization1, "(define (f i) (if (= i 1000) '() (f (+ i 1)))) (f 1)", "()", cps);
+        let src = "(define (f i) (if (= i 1000) '() (f (+ i 1)))) (f 1)";
+        let res = "()";
+        assert_eq!(interpreter::new("cps").execute(src).unwrap(), res);
+    }
+}
