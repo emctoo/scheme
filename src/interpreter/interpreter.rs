@@ -1,5 +1,5 @@
-use crate::interpreter::ast_walk_interpreter;
-use crate::interpreter::cps_interpreter;
+use crate::interpreter::ast_walk;
+use crate::interpreter::cps;
 use crate::reader::lexer;
 use crate::reader::parser;
 
@@ -29,15 +29,15 @@ pub fn new(t: &str) -> Interpreter {
 }
 
 pub enum Interpreter {
-    AstWalk(ast_walk_interpreter::Interpreter),
-    Cps(cps_interpreter::Interpreter),
+    AstWalk(ast_walk::Interpreter),
+    Cps(cps::Interpreter),
 }
 
 impl Interpreter {
     fn new(t: &str) -> Interpreter {
-        match t.as_ref() {
-            "cps" => Interpreter::Cps(cps_interpreter::new().unwrap()),
-            "ast_walk" => Interpreter::AstWalk(ast_walk_interpreter::new()),
+        match t {
+            "cps" => Interpreter::Cps(cps::new().unwrap()),
+            "ast_walk" => Interpreter::AstWalk(ast_walk::new()),
             _ => panic!("Interpreter type must be 'cps' or 'ast_walk'"),
         }
     }
@@ -51,9 +51,7 @@ impl Interpreter {
     pub fn execute(&self, input: &str) -> Result<String, String> {
         let parsed = self.parse(input)?;
         match *self {
-            Interpreter::AstWalk(ref i) => {
-                Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed))))
-            }
+            Interpreter::AstWalk(ref i) => Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed)))),
             Interpreter::Cps(ref i) => Ok(format!("{:?}", try_or_err_to_string!(i.run(&parsed)))),
         }
     }

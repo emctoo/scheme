@@ -16,9 +16,7 @@ fn main() {
         .arg(Arg::new("file").help("Input file").num_args(0..=1))
         .get_matches();
 
-    let interpreter_type = matches
-        .get_one::<String>("type")
-        .expect("default value should exist");
+    let interpreter_type = matches.get_one::<String>("type").expect("default value should exist");
     let interpreter = interpreter::new(interpreter_type);
 
     match matches.get_one::<String>("file") {
@@ -26,15 +24,6 @@ fn main() {
         None => interpreter.start_repl(),
     }
 }
-
-//TODO: Refactor all this to use current testing stuff
-
-// #[cfg(not(test))]
-// fn print_usage(program: &str, opts: Options) {
-//     let brief = format!("Usage: {} [options]", program);
-//     print!("{}", opts.usage(&brief));
-// }
-//
 
 macro_rules! test {
     ($name:ident, $src:expr, $res:expr) => {
@@ -88,10 +77,7 @@ macro_rules! assert_execute_ast_walk {
 
 macro_rules! assert_execute_fail_ast_walk {
     ($src:expr, $res:expr) => {
-        assert_eq!(
-            interpreter::new("ast_walk").execute($src).err().unwrap(),
-            $res
-        )
+        assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res)
     };
 }
 
@@ -115,11 +101,7 @@ test!(identity4, "(lambda (x) x)", "#<procedure>");
 test!(addition1, "(+ 2 3)", "5");
 test!(addition2, "(+ 2 -3)", "-1");
 test!(addition3, "(+ 2 3 4 5)", "14");
-test!(
-    addition4,
-    "(+ (+ 2 -3) (+ 4 -5) (+ 6 -7) (+ 8 -9 10 -11 12 -13))",
-    "-6"
-);
+test!(addition4, "(+ (+ 2 -3) (+ 4 -5) (+ 6 -7) (+ 8 -9 10 -11 12 -13))", "-6");
 
 test!(subtraction1, "(- 3 2)", "1");
 test!(subtraction2, "(- 2 -3)", "5");
@@ -155,11 +137,7 @@ test!(nested_expressions1, "(+ 2 (- (+ 9 1) 4))", "8");
 
 test!(list_creation1, "(list)", "()");
 test!(list_creation2, "(list 1 2 3)", "(1 2 3)");
-test!(
-    list_creation3,
-    "(list 1 (list 2 3) (list 4) (list))",
-    "(1 (2 3) (4) ())"
-);
+test!(list_creation3, "(list 1 (list 2 3) (list 4) (list))", "(1 (2 3) (4) ())");
 
 test!(null1, "(null? '())", "#t");
 test!(null2, "(null? '(1))", "#f");
@@ -177,21 +155,13 @@ test!(cons3, "(cons '(1) '(2))", "((1) 2)");
 test!(car1, "(car '(1))", "1");
 test!(car2, "(car '(1 2 3))", "1");
 test!(car3, "(car '((1) (2 3)))", "(1)");
-test_fail!(
-    car4,
-    "(car '())",
-    "RuntimeError: Can't run car on an empty list"
-);
+test_fail!(car4, "(car '())", "RuntimeError: Can't run car on an empty list");
 
 test!(cdr1, "(cdr '(1 2))", "(2)");
 test!(cdr2, "(cdr '(1 2 3))", "(2 3)");
 test!(cdr3, "(cdr '(1))", "()");
 test!(cdr4, "(cdr '((1) (2 3)))", "((2 3))");
-test_fail!(
-    cdr5,
-    "(cdr '())",
-    "RuntimeError: Can't run cdr on an empty list"
-);
+test_fail!(cdr5, "(cdr '())", "RuntimeError: Can't run cdr on an empty list");
 
 test!(append1, "(append '(1) '(2))", "(1 2)");
 test!(append2, "(append '(1) '())", "(1)");
@@ -202,116 +172,40 @@ test!(append5, "(append '(1) '((2)))", "(1 (2))");
 test!(variable_definition1, "(define x 2) (+ x x x)", "6");
 test!(variable_definition2, "(define x 2) ((lambda (x) x) 3)", "3");
 test!(variable_definition3, "(define x 2) (let ((x 3)) x)", "3");
-test!(
-    variable_definition4,
-    "(define x 2) ((lambda (x) (define x 4) x) 3)",
-    "4"
-);
-test!(
-    variable_definition5,
-    "(define x 2) (let ((x 3)) (define x 4) x)",
-    "4"
-);
+test!(variable_definition4, "(define x 2) ((lambda (x) (define x 4) x) 3)", "4");
+test!(variable_definition5, "(define x 2) (let ((x 3)) (define x 4) x)", "4");
 
-test_fail!(
-    duplicate_variable_definition1,
-    "(define x 2) (define x 3)",
-    "RuntimeError: Duplicate define: \"x\""
-);
-test_fail!(
-    duplicate_variable_definition2,
-    "((lambda () (define x 2) (define x 3)))",
-    "RuntimeError: Duplicate define: \"x\""
-);
-test_fail!(
-    duplicate_variable_definition3,
-    "(let ((y 2)) (define x 2) (define x 3))",
-    "RuntimeError: Duplicate define: \"x\""
-);
+test_fail!(duplicate_variable_definition1, "(define x 2) (define x 3)", "RuntimeError: Duplicate define: \"x\"");
+test_fail!(duplicate_variable_definition2, "((lambda () (define x 2) (define x 3)))", "RuntimeError: Duplicate define: \"x\"");
+test_fail!(duplicate_variable_definition3, "(let ((y 2)) (define x 2) (define x 3))", "RuntimeError: Duplicate define: \"x\"");
 
-test!(
-    variable_modification1,
-    "(define x 2) (set! x 3) (+ x x x)",
-    "9"
-);
-test!(
-    variable_modification2,
-    "(define x 2) ((lambda () (set! x 3))) x",
-    "3"
-);
-test!(
-    variable_modification3,
-    "(define x 2) (let ((y 2)) (set! x 3)) x",
-    "3"
-);
+test!(variable_modification1, "(define x 2) (set! x 3) (+ x x x)", "9");
+test!(variable_modification2, "(define x 2) ((lambda () (set! x 3))) x", "3");
+test!(variable_modification3, "(define x 2) (let ((y 2)) (set! x 3)) x", "3");
 
-test_fail!(
-    unknown_variable_modification1,
-    "(set! x 3)",
-    "RuntimeError: Can't set! an undefined variable: \"x\""
-);
+test_fail!(unknown_variable_modification1, "(set! x 3)", "RuntimeError: Can't set! an undefined variable: \"x\"");
 
-test!(
-    procedure_definition1,
-    "(define double (lambda (x) (+ x x))) (double 8)",
-    "16"
-);
-test!(
-    procedure_definition2,
-    "(define twice (lambda (f v) (f (f v)))) (twice (lambda (x) (+ x x)) 8)",
-    "32"
-);
-test!(
-    procedure_definition3,
-    "(define twice (λ (f v) (f (f v)))) (twice (λ (x) (+ x x)) 8)",
-    "32"
-);
+test!(procedure_definition1, "(define double (lambda (x) (+ x x))) (double 8)", "16");
+test!(procedure_definition2, "(define twice (lambda (f v) (f (f v)))) (twice (lambda (x) (+ x x)) 8)", "32");
+test!(procedure_definition3, "(define twice (λ (f v) (f (f v)))) (twice (λ (x) (+ x x)) 8)", "32");
 test!(procedure_definition4, "((λ (x) (+ x x)) 8)", "16");
-test!(
-    procedure_definition5,
-    "(define foo (λ (x) (λ (y) (+ x y)))) (define add2 (foo 2)) (add2 5)",
-    "7"
-);
-test!(
-    procedure_definition6,
-    "(define foo (λ (x) (λ (y) (+ x y)))) (define add2 (foo 2)) ((λ (x) (add2 (+ x 1))) 1)",
-    "4"
-);
-test!(
-    procedure_definition7,
-    "(define (twice f v) (f (f v))) (twice (lambda (x) (+ x x)) 8)",
-    "32"
-);
+test!(procedure_definition5, "(define foo (λ (x) (λ (y) (+ x y)))) (define add2 (foo 2)) (add2 5)", "7");
+test!(procedure_definition6, "(define foo (λ (x) (λ (y) (+ x y)))) (define add2 (foo 2)) ((λ (x) (add2 (+ x 1))) 1)", "4");
+test!(procedure_definition7, "(define (twice f v) (f (f v))) (twice (lambda (x) (+ x x)) 8)", "32");
 
-test!(
-    begin_statement1,
-    "(define x 1) (begin (set! x 5) (set! x (+ x 2)) x)",
-    "7"
-);
+test!(begin_statement1, "(define x 1) (begin (set! x 5) (set! x (+ x 2)) x)", "7");
 
 test!(let_statement1, "(let ((x 2)) (+ x x))", "4");
 test!(let_statement2, "(let ((x 2) (y 3)) (+ x y))", "5");
-test!(
-    let_statement3,
-    "(let ((x 2) (y 3)) (set! y (+ y 1)) (+ x y))",
-    "6"
-);
+test!(let_statement3, "(let ((x 2) (y 3)) (set! y (+ y 1)) (+ x y))", "6");
 
 test!(conditional_execution1, "(if #t 1 2)", "1");
 test!(conditional_execution2, "(if #f 1 2)", "2");
 test!(conditional_execution3, "(if 0 1 2)", "1");
 test!(conditional_execution4, "(if \"\" 1 2)", "1");
 
-test!(
-    conditional_execution_doesnt_run_other_case1,
-    "(if #t 1 (error \"bad\"))",
-    "1"
-);
-test!(
-    conditional_execution_doesnt_run_other_case2,
-    "(if #f (error \"bad\") 2)",
-    "2"
-);
+test!(conditional_execution_doesnt_run_other_case1, "(if #t 1 (error \"bad\"))", "1");
+test!(conditional_execution_doesnt_run_other_case2, "(if #f (error \"bad\") 2)", "2");
 
 test!(boolean_operators1, "(and)", "#t");
 test!(boolean_operators2, "(and #t)", "#t");
@@ -341,92 +235,55 @@ test!(quoting10, "'(a b (c (d) e ()))", "(a b (c (d) e ()))");
 test!(quoting11, "'(1 '2)", "(1 (quote 2))");
 
 test!(quasiquoting1, "(quasiquote (1 2))", "(1 2)");
-test!(
-    quasiquoting2,
-    "(quasiquote (2 (unquote (+ 1 2)) 4))",
-    "(2 3 4)"
-);
+test!(quasiquoting2, "(quasiquote (2 (unquote (+ 1 2)) 4))", "(2 3 4)");
 test!(quasiquoting3, "`(2 ,(+ 1 2) 4)", "(2 3 4)");
-test!(
-    quasiquoting4,
-    "(define formula '(+ x y)) `((lambda (x y) ,formula) 2 3)",
-    "((lambda (x y) (+ x y)) 2 3)"
-);
+test!(quasiquoting4, "(define formula '(+ x y)) `((lambda (x y) ,formula) 2 3)", "((lambda (x y) (+ x y)) 2 3)");
 
 test!(apply1, "(apply + '(1 2 3))", "6");
-test!(
-    apply2,
-    "(define foo (lambda (f) (lambda (x y) (f (f x y) y)))) (apply (apply foo (list +)) '(5 3))",
-    "11"
-);
+test!(apply2, "(define foo (lambda (f) (lambda (x y) (f (f x y) y)))) (apply (apply foo (list +)) '(5 3))", "11");
 
 test!(eval1, "(eval '(+ 1 2 3))", "6");
 test!(eval2, "(define eval-formula (lambda (formula) (eval `((lambda (x y) ,formula) 2 3)))) (eval-formula '(+ (- y x) y))", "4");
-test_fail!(eval3, "(define bad-eval-formula (lambda (formula) ((lambda (x y) (eval formula)) 2 3))) (bad-eval-formula '(+ x y))", "RuntimeError: Identifier not found: x");
-
 test_fail!(
-    bad_syntax1,
-    "(22+)",
-    "SyntaxError: Unexpected character when looking for a delimiter: + (line: 1, column: 4)"
-);
-test_fail!(
-    bad_syntax2,
-    "(+ 2 3)\n(+ 1 2-)",
-    "SyntaxError: Unexpected character when looking for a delimiter: - (line: 2, column: 7)"
+    eval3,
+    "(define bad-eval-formula (lambda (formula) ((lambda (x y) (eval formula)) 2 3))) (bad-eval-formula '(+ x y))",
+    "RuntimeError: Identifier not found: x"
 );
 
-test_fail!(
-    generated_runtime_error1,
-    "(error \"fail, please\")",
-    "RuntimeError: \"fail, please\""
-);
-test_fail!(
-    generated_runtime_error2,
-    "(error (+ 2 3))",
-    "RuntimeError: 5"
-);
+test_fail!(bad_syntax1, "(22+)", "SyntaxError: Unexpected character when looking for a delimiter: + (line: 1, column: 4)");
+test_fail!(bad_syntax2, "(+ 2 3)\n(+ 1 2-)", "SyntaxError: Unexpected character when looking for a delimiter: - (line: 2, column: 7)");
 
-test_fail!(
-    errors_halt_execution1,
-    "(error \"fail, please\") 5",
-    "RuntimeError: \"fail, please\""
-);
+test_fail!(generated_runtime_error1, "(error \"fail, please\")", "RuntimeError: \"fail, please\"");
+test_fail!(generated_runtime_error2, "(error (+ 2 3))", "RuntimeError: 5");
 
+test_fail!(errors_halt_execution1, "(error \"fail, please\") 5", "RuntimeError: \"fail, please\"");
+
+test!(unicode_identifiers1, "(define ★ 3) (define ♫ 4) (+ ★ ♫)", "7");
+
+test!(macros1, "(define-syntax-rule (incr x) (set! x (+ x 1))) (define a 1) (incr a) a", "2");
+test!(macros2, "(define-syntax-rule (incr x) (set! x (+ x 1))) (define x 1) (incr x) x", "2");
 test!(
-    unicode_identifiers1,
-    "(define ★ 3) (define ♫ 4) (+ ★ ♫)",
-    "7"
+    macros3,
+    r"
+    (define-syntax-rule (incr x) (set! x (+ x 1))) 
+    (define-syntax-rule (foo x y z) (if x (incr y) (incr z)))
+    (define a #t)
+    (define b 10)
+    (define c 20)
+    (foo a b c)
+    (set! a #f)
+    (foo a b c)
+    (list b c)",
+    "(11 21)"
 );
-
-test!(
-    macros1,
-    "(define-syntax-rule (incr x) (set! x (+ x 1))) (define a 1) (incr a) a",
-    "2"
-);
-test!(
-    macros2,
-    "(define-syntax-rule (incr x) (set! x (+ x 1))) (define x 1) (incr x) x",
-    "2"
-);
-test!(macros3, "(define-syntax-rule (incr x) (set! x (+ x 1))) (define-syntax-rule (foo x y z) (if x (incr y) (incr z))) (define a #t) (define b 10) (define c 20) (foo a b c) (set! a #f) (foo a b c) (list b c)", "(11 21)");
-test!(
-    macros4,
-    "(define-syntax-rule (foo x) (if x (+ (foo #f) 3) 10)) (foo #t)",
-    "13"
-);
+test!(macros4, "(define-syntax-rule (foo x) (if x (+ (foo #f) 3) 10)) (foo #t)", "13");
 test!(macros5, "(define-syntax-rule (testy a b c) (if a b c)) (testy #t 1 (error \"test\")) (testy #f (error \"test\") 2)", "2");
 
 test!(multiline1, "(define x 3)\n(define y 4)\n(+ x y)", "7");
 
-test!(
-    comment1,
-    "(define x 3)\n(define y 4)\n;(set! y 5)\n(+ x y); (+ x y)",
-    "7"
-);
+test!(comment1, "(define x 3)\n(define y 4)\n;(set! y 5)\n(+ x y); (+ x y)", "7");
 
-test!(
-    tail_call_optimization1,
-    "(define (f i) (if (= i 1000) '() (f (+ i 1)))) (f 1)",
-    "()",
-    cps
-);
+test!(tail_call_optimization1, "(define (f i) (if (= i 1000) '() (f (+ i 1)))) (f 1)", "()", cps);
+
+#[cfg(test)]
+mod tests {}
