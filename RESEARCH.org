@@ -81,12 +81,15 @@ https://github.com/edeproject/edelib/blob/master/test/scheme/r5rs.ss
 https://github.com/edeproject/edelib/blob/master/test/scheme/tiny-clos.ss
 http://t3x.org/s9fes/test.scm.html
 
-## reference implementations
+## various links
 
 https://github.com/ytakano/blisp
 https://github.com/udem-dlteam/ribbit
 https://github.com/raviqqe/stak
 https://spritely.institute/hoot/
+https://scheme.fail/
 
 https://github.com/schemedoc/cookbook
 https://www.gnu.org/software/guile/manual/html_node/Continuation_002dPassing-Style.html
+
+https://ecraven.github.io/r7rs-benchmarks/
