@@ -25,7 +25,7 @@ impl Interpreter {
     fn new(t: &str) -> Interpreter {
         match t {
             "cps" => Interpreter::Cps(cps::new().unwrap()),
-            "ast_walk" => Interpreter::AstWalk(ast_walk::new()),
+            "ast-walk" => Interpreter::AstWalk(ast_walk::new()),
             _ => panic!("Interpreter type must be 'cps' or 'ast_walk'"),
         }
     }

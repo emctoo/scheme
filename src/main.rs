@@ -56,7 +56,7 @@ fn main() {
                 .short('t')
                 .long("type")
                 .help("set interpreter type")
-                .value_parser(["ast_walk", "cps"])
+                .value_parser(["ast-walk", "cps"])
                 .default_value("cps"),
         )
         .arg(Arg::new("file").help("Input file").num_args(0..=1))
@@ -85,7 +85,7 @@ macro_rules! test {
         #[test]
         fn $name() {
             // assert_execute_all!($src, $res);
-            assert_eq!(interpreter::new("ast_walk").execute($src).unwrap(), $res);
+            assert_eq!(interpreter::new("ast-walk").execute($src).unwrap(), $res);
             assert_eq!(interpreter::new("cps").execute($src).unwrap(), $res);
         }
     }; // ($name:ident, $src:expr, $res:expr, cps) => {
@@ -102,7 +102,7 @@ macro_rules! test_fail {
         #[test]
         fn $name() {
             // assert_execute_fail_all!($src, $res);
-            assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res);
+            assert_eq!(interpreter::new("ast-walk").execute($src).err().unwrap(), $res);
             assert_eq!(interpreter::new("cps").execute($src).err().unwrap(), $res);
         }
     }; // ($name:ident, $src:expr, $res:expr, cps) => {
@@ -130,13 +130,13 @@ macro_rules! test_fail {
 
 // macro_rules! assert_execute_ast_walk {
 //     ($src:expr, $res:expr) => {
-//         assert_eq!(interpreter::new("ast_walk").execute($src).unwrap(), $res)
+//         assert_eq!(interpreter::new("ast-walk").execute($src).unwrap(), $res)
 //     };
 // }
 
 // macro_rules! assert_execute_fail_ast_walk {
 //     ($src:expr, $res:expr) => {
-//         assert_eq!(interpreter::new("ast_walk").execute($src).err().unwrap(), $res)
+//         assert_eq!(interpreter::new("ast-walk").execute($src).err().unwrap(), $res)
 //     };
 // }
 
