@@ -67,4 +67,26 @@
 http://home.pipeline.com/~hbaker1/LinearLisp.html
 http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html?m=1
 
+
+## tests
+
+https://www.reddit.com/r/scheme/comments/j0ws45/any_existing_set_of_small_tests_for_scheme/
+
+https://github.com/jcubic/lips/tree/master/tests
+https://github.com/ashinn/chibi-scheme/blob/master/tests/r5rs-tests.scm
+https://github.com/ashinn/chibi-scheme/blob/master/tests/r7rs-tests.scm
+https://git.savannah.gnu.org/cgit/guile.git/tree/test-suite/tests
+https://github.com/alaricsp/chicken-scheme/tree/master/tests
+https://github.com/edeproject/edelib/blob/master/test/scheme/r5rs.ss
+https://github.com/edeproject/edelib/blob/master/test/scheme/tiny-clos.ss
+http://t3x.org/s9fes/test.scm.html
+
+## reference implementations
+
 https://github.com/ytakano/blisp
+https://github.com/udem-dlteam/ribbit
+https://github.com/raviqqe/stak
+https://spritely.institute/hoot/
+
+https://github.com/schemedoc/cookbook
+https://www.gnu.org/software/guile/manual/html_node/Continuation_002dPassing-Style.html
