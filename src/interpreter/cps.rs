@@ -47,6 +47,7 @@ macro_rules! shift_or_error {
 pub enum Value {
     Symbol(String),
     Integer(i64),
+    Float(f64),
     Boolean(bool),
     String(String),
     List(List),
@@ -65,6 +66,7 @@ impl Value {
         match *node {
             Node::Identifier(ref val) => Value::Symbol(val.clone()),
             Node::Integer(val) => Value::Integer(val),
+            Node::Float(val) => Value::Float(val),
             Node::Boolean(val) => Value::Boolean(val),
             Node::String(ref val) => Value::String(val.clone()),
             Node::List(ref nodes) => Value::List(List::from_nodes(&nodes)),
@@ -112,6 +114,7 @@ impl fmt::Display for Value {
         match *self {
             Value::Symbol(ref val) => write!(f, "{}", val),
             Value::Integer(val) => write!(f, "{}", val),
+            Value::Float(val) => write!(f, "{}", val),
             Value::Boolean(val) => write!(f, "#{}", if val { "t" } else { "f" }),
             Value::String(ref val) => write!(f, "{}", val),
             Value::List(ref list) => write!(f, "{}", list),
@@ -180,20 +183,8 @@ pub enum Continuation {
     EvaluateIf(Value, Value, Rc<RefCell<Environment>>, Box<Continuation>),
     EvaluateDefine(String, Rc<RefCell<Environment>>, Box<Continuation>),
     EvaluateSet(String, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateFunc(
-        Value,
-        List,
-        List,
-        Rc<RefCell<Environment>>,
-        Box<Continuation>,
-    ),
-    EvaluateLet(
-        String,
-        List,
-        List,
-        Rc<RefCell<Environment>>,
-        Box<Continuation>,
-    ),
+    EvaluateFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvaluateLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     ExecuteEval(Rc<RefCell<Environment>>, Box<Continuation>),
     EvaluateApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
@@ -342,11 +333,7 @@ impl fmt::Display for List {
 
 impl fmt::Debug for List {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let strs: Vec<String> = self
-            .clone()
-            .into_iter()
-            .map(|v| format!("{:?}", v))
-            .collect();
+        let strs: Vec<String> = self.clone().into_iter().map(|v| format!("{:?}", v)).collect();
         write!(f, "({})", &strs.join(" "))
     }
 }
@@ -367,34 +354,20 @@ impl Continuation {
                         match f {
                             SpecialForm::If => {
                                 let (condition, if_expr, else_expr) = rest.unpack3()?;
-                                Ok(Trampoline::Bounce(
-                                    condition,
-                                    env.clone(),
-                                    Continuation::EvaluateIf(if_expr, else_expr, env, k),
-                                ))
+                                Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvaluateIf(if_expr, else_expr, env, k)))
                             }
                             SpecialForm::Define => {
-                                let (car, cdr) = shift_or_error!(
-                                    rest,
-                                    "Must provide at least two arguments to define"
-                                );
+                                let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
                                 match car {
                                     Value::Symbol(name) => {
                                         let val = cdr.unpack1()?;
-                                        Ok(Trampoline::Bounce(
-                                            val,
-                                            env.clone(),
-                                            Continuation::EvaluateDefine(name, env, k),
-                                        ))
+                                        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvaluateDefine(name, env, k)))
                                     }
                                     Value::List(list) => {
                                         let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
                                         let name = caar.as_symbol()?;
 
-                                        let arg_names =
-                                            cdar.into_iter()
-                                                .map(|v| v.as_symbol())
-                                                .collect::<Result<Vec<String>, RuntimeError>>()?;
+                                        let arg_names = cdar.into_iter().map(|v| v.as_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
                                         let body = cdr;
                                         let f = Function::Scheme(arg_names, body, env.clone());
 
@@ -407,17 +380,10 @@ impl Continuation {
                             SpecialForm::Set => {
                                 let (name_raw, val) = rest.unpack2()?;
                                 let name = name_raw.as_symbol()?;
-                                Ok(Trampoline::Bounce(
-                                    val,
-                                    env.clone(),
-                                    Continuation::EvaluateSet(name, env, k),
-                                ))
+                                Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvaluateSet(name, env, k)))
                             }
                             SpecialForm::Lambda => {
-                                let (arg_defns_raw, body) = shift_or_error!(
-                                    rest,
-                                    "Must provide at least two arguments to lambda"
-                                );
+                                let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
                                 let arg_defns = arg_defns_raw.as_list()?;
 
                                 let arg_names = arg_defns
@@ -429,10 +395,7 @@ impl Continuation {
                                 Ok(Trampoline::Run(Value::Procedure(f), *k))
                             }
                             SpecialForm::Let => {
-                                let (arg_defns_raw, body) = shift_or_error!(
-                                    rest,
-                                    "Must provide at least two arguments to let"
-                                );
+                                let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
                                 let arg_defns = arg_defns_raw.as_list()?;
 
                                 // Create a new, child environment for the procedure and define the arguments as local variables
@@ -440,17 +403,10 @@ impl Continuation {
 
                                 // Iterate through the provided arguments, defining them
                                 if !arg_defns.is_empty() {
-                                    let (first_defn, rest_defns) =
-                                        shift_or_error!(arg_defns, "Error in let definiton");
+                                    let (first_defn, rest_defns) = shift_or_error!(arg_defns, "Error in let definiton");
                                     let (defn_key, defn_val) = first_defn.as_list()?.unpack2()?;
                                     let name = defn_key.as_symbol()?;
-                                    Ok(Trampoline::Bounce(
-                                        defn_val,
-                                        env,
-                                        Continuation::EvaluateLet(
-                                            name, rest_defns, body, proc_env, k,
-                                        ),
-                                    ))
+                                    Ok(Trampoline::Bounce(defn_val, env, Continuation::EvaluateLet(name, rest_defns, body, proc_env, k)))
                                 } else {
                                     // Let bindings were empty, just execute the body directly
                                     evaluate_expressions(body, env, k)
@@ -464,16 +420,9 @@ impl Continuation {
                                 let expr = rest.unpack1()?;
                                 match expr {
                                     Value::List(list) => match list.shift() {
-                                        Some((car, cdr)) => Ok(Trampoline::QuasiBounce(
-                                            car,
-                                            env.clone(),
-                                            Continuation::ContinueQuasiquoting(
-                                                cdr,
-                                                List::Null,
-                                                env,
-                                                k,
-                                            ),
-                                        )),
+                                        Some((car, cdr)) => {
+                                            Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k)))
+                                        }
                                         None => Ok(Trampoline::Run(null!(), *k)),
                                     },
                                     _ => Ok(Trampoline::Run(expr, *k)),
@@ -481,44 +430,22 @@ impl Continuation {
                             }
                             SpecialForm::Eval => {
                                 let expr = rest.unpack1()?;
-                                Ok(Trampoline::Bounce(
-                                    expr,
-                                    env.clone(),
-                                    Continuation::ExecuteEval(env, k),
-                                ))
+                                Ok(Trampoline::Bounce(expr, env.clone(), Continuation::ExecuteEval(env, k)))
                             }
                             SpecialForm::Apply => {
                                 let (func, args) = rest.unpack2()?;
-                                Ok(Trampoline::Bounce(
-                                    func,
-                                    env.clone(),
-                                    Continuation::EvaluateApplyArgs(args, env, k),
-                                ))
+                                Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvaluateApplyArgs(args, env, k)))
                             }
                             SpecialForm::Begin => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(
-                                    car,
-                                    env.clone(),
-                                    Continuation::EvaluateExpressions(cdr, env, k),
-                                )),
-                                None => runtime_error!(
-                                    "Must provide at least one argument to a begin statement"
-                                ),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateExpressions(cdr, env, k))),
+                                None => runtime_error!("Must provide at least one argument to a begin statement"),
                             },
                             SpecialForm::And => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(
-                                    car,
-                                    env.clone(),
-                                    Continuation::EvaluateAnd(cdr, env, k),
-                                )),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateAnd(cdr, env, k))),
                                 None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
                             },
                             SpecialForm::Or => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(
-                                    car,
-                                    env.clone(),
-                                    Continuation::EvaluateOr(cdr, env, k),
-                                )),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateOr(cdr, env, k))),
                                 None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                             },
                             SpecialForm::CallCC => {
@@ -530,7 +457,7 @@ impl Continuation {
 
                                 let (name, arg_names_raw) = match defn.as_list()?.shift() {
                                     Some((car, cdr)) => (car.as_symbol()?, cdr),
-                                    None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule")
+                                    None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
                                 };
 
                                 let arg_names = arg_names_raw
@@ -547,11 +474,7 @@ impl Continuation {
                     Value::Macro(arg_names, body) => {
                         let args = rest;
                         if arg_names.len() != args.len() {
-                            runtime_error!(
-                                "Must supply exactly {} arguments to macro: {:?}",
-                                arg_names.len(),
-                                args
-                            );
+                            runtime_error!("Must supply exactly {} arguments to macro: {:?}", arg_names.len(), args);
                         }
 
                         // Create a lookup table for symbol substitutions
@@ -567,11 +490,7 @@ impl Continuation {
                         Ok(Trampoline::Bounce(expanded, env, *k))
                     }
                     _ => match rest.shift() {
-                        Some((car, cdr)) => Ok(Trampoline::Bounce(
-                            car,
-                            env.clone(),
-                            Continuation::EvaluateFunc(val, cdr, List::Null, env, k),
-                        )),
+                        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateFunc(val, cdr, List::Null, env, k))),
                         None => apply(val, List::Null, k),
                     },
                 }
@@ -579,11 +498,7 @@ impl Continuation {
             Continuation::EvaluateFunc(f, rest, acc, env, k) => {
                 let acc2 = acc.unshift(val);
                 match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(
-                        car,
-                        env.clone(),
-                        Continuation::EvaluateFunc(f, cdr, acc2, env, k),
-                    )),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateFunc(f, cdr, acc2, env, k))),
                     None => apply(f, acc2.reverse(), k),
                 }
             }
@@ -606,11 +521,7 @@ impl Continuation {
                     Some((next_defn, rest_defns)) => {
                         let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
                         let name = defn_key.as_symbol()?;
-                        Ok(Trampoline::Bounce(
-                            defn_val,
-                            env.clone(),
-                            Continuation::EvaluateLet(name, rest_defns, body, env, k),
-                        ))
+                        Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvaluateLet(name, rest_defns, body, env, k)))
                     }
                     None => {
                         let inner_env = Environment::new_child(env);
@@ -621,48 +532,28 @@ impl Continuation {
             Continuation::ContinueQuasiquoting(rest, acc, env, k) => {
                 let acc2 = acc.unshift(val);
                 match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::QuasiBounce(
-                        car,
-                        env.clone(),
-                        Continuation::ContinueQuasiquoting(cdr, acc2, env, k),
-                    )),
+                    Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
                     None => Ok(Trampoline::Run(acc2.reverse().to_value(), *k)),
                 }
             }
-            Continuation::ExecuteEval(env, k) => {
-                Ok(Trampoline::Bounce(val, Environment::get_root(env), *k))
-            }
-            Continuation::EvaluateApplyArgs(args, env, k) => Ok(Trampoline::Bounce(
-                args,
-                env,
-                Continuation::ExecuteApply(val, k),
-            )),
+            Continuation::ExecuteEval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
+            Continuation::EvaluateApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::ExecuteApply(val, k))),
             Continuation::ExecuteApply(f, k) => apply(f, val.as_list()?, k),
             Continuation::EvaluateAnd(rest, env, k) => match val {
                 Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                 _ => match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(
-                        car,
-                        env.clone(),
-                        Continuation::EvaluateAnd(cdr, env, k),
-                    )),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateAnd(cdr, env, k))),
                     None => Ok(Trampoline::Run(val, *k)),
                 },
             },
             Continuation::EvaluateOr(rest, env, k) => match val {
                 Value::Boolean(false) => match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(
-                        car,
-                        env.clone(),
-                        Continuation::EvaluateOr(cdr, env, k),
-                    )),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateOr(cdr, env, k))),
                     None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                 },
                 _ => Ok(Trampoline::Run(val, *k)),
             },
-            Continuation::ExecuteCallCC(k) => {
-                apply(val, List::Null.unshift(Value::Continuation(k.clone())), k)
-            }
+            Continuation::ExecuteCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
             Continuation::Return => Ok(Trampoline::Land(val)),
         }
     }
@@ -674,11 +565,7 @@ fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, Run
             match f {
                 Function::Scheme(arg_names, body, func_env) => {
                     if arg_names.len() != args.len() {
-                        runtime_error!(
-                            "Must supply exactly {} arguments to function: {:?}",
-                            arg_names.len(),
-                            args
-                        );
+                        runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
                     }
 
                     // Create a new, child environment for the procedure and define the arguments as local variables
@@ -711,27 +598,16 @@ fn expand_macro(value: Value, substitutions: &HashMap<String, Value>) -> Value {
             None => Value::Symbol(s),
         },
         Value::List(list) => {
-            let expanded = list
-                .into_iter()
-                .map(|v| expand_macro(v, substitutions))
-                .collect();
+            let expanded = list.into_iter().map(|v| expand_macro(v, substitutions)).collect();
             Value::from_vec(expanded)
         }
         other => other,
     }
 }
 
-fn evaluate_expressions(
-    exprs: List,
-    env: Rc<RefCell<Environment>>,
-    k: Box<Continuation>,
-) -> Result<Trampoline, RuntimeError> {
+fn evaluate_expressions(exprs: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match exprs.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(
-            car,
-            env.clone(),
-            Continuation::EvaluateExpressions(cdr, env, k),
-        )),
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateExpressions(cdr, env, k))),
         None => runtime_error!("Trying to evaluate an empty expression list"),
     }
 }
@@ -749,11 +625,7 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
             Trampoline::Bounce(a, env, k) => {
                 b = match a {
                     Value::List(list) => match list.shift() {
-                        Some((car, cdr)) => Trampoline::Bounce(
-                            car,
-                            env.clone(),
-                            Continuation::BeginFunc(cdr, env, Box::new(k)),
-                        ),
+                        Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Continuation::BeginFunc(cdr, env, Box::new(k))),
                         None => runtime_error!("Can't apply an empty list as a function"),
                     },
                     Value::Symbol(ref s) => {
@@ -772,9 +644,7 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                             "and" => Value::SpecialForm(SpecialForm::And),
                             "or" => Value::SpecialForm(SpecialForm::Or),
                             "call/cc" => Value::SpecialForm(SpecialForm::CallCC),
-                            "define-syntax-rule" => {
-                                Value::SpecialForm(SpecialForm::DefineSyntaxRule)
-                            }
+                            "define-syntax-rule" => Value::SpecialForm(SpecialForm::DefineSyntaxRule),
                             _ => match env.borrow().get(s) {
                                 Some(v) => v,
                                 None => runtime_error!("Identifier not found: {}", s),
@@ -795,16 +665,7 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                                 let expr = cdr.unpack1()?;
                                 Trampoline::Bounce(expr, env, k)
                             }
-                            _ => Trampoline::QuasiBounce(
-                                car,
-                                env.clone(),
-                                Continuation::ContinueQuasiquoting(
-                                    cdr,
-                                    List::Null,
-                                    env,
-                                    Box::new(k),
-                                ),
-                            ),
+                            _ => Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, Box::new(k))),
                         },
                         None => k.run(null!())?,
                     },
@@ -851,48 +712,18 @@ impl Environment {
         env.define("<".to_string(), Value::Procedure(Function::Native("<")))?;
         env.define(">".to_string(), Value::Procedure(Function::Native(">")))?;
         env.define("=".to_string(), Value::Procedure(Function::Native("=")))?;
-        env.define(
-            "null?".to_string(),
-            Value::Procedure(Function::Native("null?")),
-        )?;
-        env.define(
-            "list".to_string(),
-            Value::Procedure(Function::Native("list")),
-        )?;
+        env.define("null?".to_string(), Value::Procedure(Function::Native("null?")))?;
+        env.define("list".to_string(), Value::Procedure(Function::Native("list")))?;
         env.define("car".to_string(), Value::Procedure(Function::Native("car")))?;
         env.define("cdr".to_string(), Value::Procedure(Function::Native("cdr")))?;
-        env.define(
-            "cons".to_string(),
-            Value::Procedure(Function::Native("cons")),
-        )?;
-        env.define(
-            "append".to_string(),
-            Value::Procedure(Function::Native("append")),
-        )?;
-        env.define(
-            "error".to_string(),
-            Value::Procedure(Function::Native("error")),
-        )?;
-        env.define(
-            "write".to_string(),
-            Value::Procedure(Function::Native("write")),
-        )?;
-        env.define(
-            "display".to_string(),
-            Value::Procedure(Function::Native("display")),
-        )?;
-        env.define(
-            "displayln".to_string(),
-            Value::Procedure(Function::Native("displayln")),
-        )?;
-        env.define(
-            "print".to_string(),
-            Value::Procedure(Function::Native("print")),
-        )?;
-        env.define(
-            "newline".to_string(),
-            Value::Procedure(Function::Native("newline")),
-        )?;
+        env.define("cons".to_string(), Value::Procedure(Function::Native("cons")))?;
+        env.define("append".to_string(), Value::Procedure(Function::Native("append")))?;
+        env.define("error".to_string(), Value::Procedure(Function::Native("error")))?;
+        env.define("write".to_string(), Value::Procedure(Function::Native("write")))?;
+        env.define("display".to_string(), Value::Procedure(Function::Native("display")))?;
+        env.define("displayln".to_string(), Value::Procedure(Function::Native("displayln")))?;
+        env.define("print".to_string(), Value::Procedure(Function::Native("print")))?;
+        env.define("newline".to_string(), Value::Procedure(Function::Native("newline")))?;
         Ok(Rc::new(RefCell::new(env)))
     }
 
@@ -1131,16 +962,8 @@ fn test_add2() {
     // runTest (+ (+ 1 2) (+ 3 4)) => 10
     let i = vec![Value::from_vec(vec![
         Value::Symbol("+".to_string()),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(1),
-            Value::Integer(2),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(3),
-            Value::Integer(4),
-        ]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
     ])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(10));
 }
@@ -1150,19 +973,10 @@ fn test_add3() {
     // runTest (+ (+ 1 2) (+ (+ 3 5 6) 4)) => 21
     let i = vec![Value::from_vec(vec![
         Value::Symbol("+".to_string()),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
         Value::from_vec(vec![
             Value::Symbol("+".to_string()),
-            Value::Integer(1),
-            Value::Integer(2),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Integer(3),
-                Value::Integer(5),
-                Value::Integer(6),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(5), Value::Integer(6)]),
             Value::Integer(4),
         ]),
     ])];
@@ -1185,11 +999,7 @@ fn test_if1() {
     // runTest (if (> 1 2) 3 4) => 4
     let i = vec![Value::from_vec(vec![
         Value::Symbol("if".to_string()),
-        Value::from_vec(vec![
-            Value::Symbol(">".to_string()),
-            Value::Integer(1),
-            Value::Integer(2),
-        ]),
+        Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(1), Value::Integer(2)]),
         Value::Integer(3),
         Value::Integer(4),
     ])];
@@ -1201,18 +1011,11 @@ fn test_if2() {
     // runTest (if (> 2 3) (error 4) (error 5)) => null
     let i = vec![Value::from_vec(vec![
         Value::Symbol("if".to_string()),
-        Value::from_vec(vec![
-            Value::Symbol(">".to_string()),
-            Value::Integer(2),
-            Value::Integer(3),
-        ]),
+        Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(2), Value::Integer(3)]),
         Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(4)]),
         Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(5)]),
     ])];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap_err().to_string(),
-        "RuntimeError: 5"
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap_err().to_string(), "RuntimeError: 5");
 }
 
 #[test]
@@ -1223,33 +1026,15 @@ fn test_if3() {
         Value::from_vec(vec![
             Value::from_vec(vec![
                 Value::Symbol("if".to_string()),
-                Value::from_vec(vec![
-                    Value::Symbol(">".to_string()),
-                    Value::Integer(5),
-                    Value::Integer(4),
-                ]),
+                Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(5), Value::Integer(4)]),
                 Value::Symbol(">".to_string()),
                 Value::Symbol("<".to_string()),
             ]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Integer(1),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
             Value::Integer(2),
         ]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(5),
-            Value::Integer(7),
-            Value::Integer(8),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(9),
-            Value::Integer(10),
-            Value::Integer(11),
-        ]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(5), Value::Integer(7), Value::Integer(8)]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(9), Value::Integer(10), Value::Integer(11)]),
     ])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(20));
 }
@@ -1276,10 +1061,7 @@ fn test_and1() {
 #[test]
 fn test_and2() {
     // runTest (and #f) => #f
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("and".to_string()),
-        Value::Boolean(false),
-    ])];
+    let i = vec![Value::from_vec(vec![Value::Symbol("and".to_string()), Value::Boolean(false)])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
 }
 
@@ -1327,10 +1109,7 @@ fn test_or1() {
 #[test]
 fn test_or2() {
     // runTest (or #f) => #f
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("or".to_string()),
-        Value::Boolean(false),
-    ])];
+    let i = vec![Value::from_vec(vec![Value::Symbol("or".to_string()), Value::Boolean(false)])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
 }
 
@@ -1372,16 +1151,8 @@ fn test_or5() {
 fn test_multiple_statements() {
     // runTest (+ 1 2) (+ 3 4) => 7
     let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(1),
-            Value::Integer(2),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Integer(3),
-            Value::Integer(4),
-        ]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
     ];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
 }
@@ -1395,14 +1166,7 @@ fn test_list() {
         Value::Integer(2),
         Value::Integer(3),
     ])];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap(),
-        Value::from_vec(vec![
-            Value::Integer(1),
-            Value::Integer(2),
-            Value::Integer(3)
-        ])
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
 }
 
 #[test]
@@ -1411,31 +1175,16 @@ fn test_cons() {
     let i = vec![Value::from_vec(vec![
         Value::Symbol("cons".to_string()),
         Value::Integer(1),
-        Value::from_vec(vec![
-            Value::Symbol("list".to_string()),
-            Value::Integer(2),
-            Value::Integer(3),
-        ]),
+        Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
     ])];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap(),
-        Value::from_vec(vec![
-            Value::Integer(1),
-            Value::Integer(2),
-            Value::Integer(3)
-        ])
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
 }
 
 #[test]
 fn test_define() {
     // runTest (define x 2) (+ x x) => 4
     let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(2),
-        ]),
+        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
         Value::from_vec(vec![
             Value::Symbol("+".to_string()),
             Value::Symbol("x".to_string()),
@@ -1449,16 +1198,8 @@ fn test_define() {
 fn test_set() {
     // runTest (define x 2) (set! x 3) (+ x x) => 6
     let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(2),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("set!".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(3),
-        ]),
+        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+        Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(3)]),
         Value::from_vec(vec![
             Value::Symbol("+".to_string()),
             Value::Symbol("x".to_string()),
@@ -1475,11 +1216,7 @@ fn test_lambda() {
         Value::from_vec(vec![
             Value::Symbol("lambda".to_string()),
             Value::from_vec(vec![Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
         ]),
         Value::Integer(3),
     ])];
@@ -1493,11 +1230,7 @@ fn test_lambda_symbol() {
         Value::from_vec(vec![
             Value::Symbol("λ".to_string()),
             Value::from_vec(vec![Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
         ]),
         Value::Integer(3),
     ])];
@@ -1510,15 +1243,8 @@ fn test_define_func() {
     let i = vec![
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("f".to_string()),
-                Value::Symbol("x".to_string()),
-            ]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
         ]),
         Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Integer(3)]),
     ];
@@ -1532,24 +1258,13 @@ fn test_define_func2() {
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
             Value::from_vec(vec![Value::Symbol("noop".to_string())]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Integer(0),
-                Value::Integer(0),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(0), Value::Integer(0)]),
         ]),
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("f".to_string()),
-                Value::Symbol("x".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
             Value::from_vec(vec![Value::Symbol("noop".to_string())]),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
         ]),
         Value::from_vec(vec![Value::from_vec(vec![
             Value::Symbol("lambda".to_string()),
@@ -1564,10 +1279,7 @@ fn test_define_func2() {
 fn test_native_fn_as_value() {
     // runTest + => #<procedure:+>
     let i = vec![Value::Symbol("+".to_string())];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap(),
-        Value::Procedure(Function::Native("+"))
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Function::Native("+")));
 }
 
 #[test]
@@ -1576,11 +1288,7 @@ fn test_dynamic_native_fn() {
     let i = vec![Value::from_vec(vec![
         Value::from_vec(vec![
             Value::Symbol("if".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol(">".to_string()),
-                Value::Integer(3),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(3), Value::Integer(2)]),
             Value::Symbol("+".to_string()),
             Value::Symbol("-".to_string()),
         ]),
@@ -1595,15 +1303,8 @@ fn test_let_bindings() {
     // runTest (let ((x 3)) (+ x 1)) => 4
     let i = vec![Value::from_vec(vec![
         Value::Symbol("let".to_string()),
-        Value::from_vec(vec![Value::from_vec(vec![
-            Value::Symbol("x".to_string()),
-            Value::Integer(3),
-        ])]),
-        Value::from_vec(vec![
-            Value::Symbol("+".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(1),
-        ]),
+        Value::from_vec(vec![Value::from_vec(vec![Value::Symbol("x".to_string()), Value::Integer(3)])]),
+        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
     ])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
 }
@@ -1615,10 +1316,7 @@ fn test_quoting() {
         Value::Symbol("quote".to_string()),
         Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]),
     ])];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap(),
-        Value::from_vec(vec![Value::Integer(1), Value::Integer(2)])
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
 }
 
 #[test]
@@ -1630,23 +1328,12 @@ fn test_quasiquoting() {
             Value::Integer(2),
             Value::from_vec(vec![
                 Value::Symbol("unquote".to_string()),
-                Value::from_vec(vec![
-                    Value::Symbol("+".to_string()),
-                    Value::Integer(1),
-                    Value::Integer(2),
-                ]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
             ]),
             Value::Integer(4),
         ]),
     ])];
-    assert_eq!(
-        exec(List::from_vec(i)).unwrap(),
-        Value::from_vec(vec![
-            Value::Integer(2),
-            Value::Integer(3),
-            Value::Integer(4)
-        ])
-    );
+    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
 }
 
 #[test]
@@ -1656,11 +1343,7 @@ fn test_eval() {
         Value::Symbol("eval".to_string()),
         Value::from_vec(vec![
             Value::Symbol("quote".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("+".to_string()),
-                Value::Integer(1),
-                Value::Integer(2),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
         ]),
     ])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
@@ -1672,19 +1355,12 @@ fn test_eval2() {
     let i = vec![
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("foo".to_string()),
-                Value::Symbol("x".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("x".to_string())]),
             Value::from_vec(vec![
                 Value::Symbol("eval".to_string()),
                 Value::from_vec(vec![
                     Value::Symbol("quote".to_string()),
-                    Value::from_vec(vec![
-                        Value::Symbol("+".to_string()),
-                        Value::Integer(1),
-                        Value::Integer(2),
-                    ]),
+                    Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
                 ]),
             ]),
             Value::Symbol("x".to_string()),
@@ -1702,11 +1378,7 @@ fn test_apply() {
         Value::Symbol("+".to_string()),
         Value::from_vec(vec![
             Value::Symbol("quote".to_string()),
-            Value::from_vec(vec![
-                Value::Integer(1),
-                Value::Integer(2),
-                Value::Integer(3),
-            ]),
+            Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]),
         ]),
     ])];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(6));
@@ -1716,26 +1388,14 @@ fn test_apply() {
 fn test_begin() {
     // runTest (define x 1) (begin (set! x 5) (set! x (+ x 2)) x) => 7
     let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(1),
-        ]),
+        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
         Value::from_vec(vec![
             Value::Symbol("begin".to_string()),
+            Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(5)]),
             Value::from_vec(vec![
                 Value::Symbol("set!".to_string()),
                 Value::Symbol("x".to_string()),
-                Value::Integer(5),
-            ]),
-            Value::from_vec(vec![
-                Value::Symbol("set!".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::from_vec(vec![
-                    Value::Symbol("+".to_string()),
-                    Value::Symbol("x".to_string()),
-                    Value::Integer(2),
-                ]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
             ]),
             Value::Symbol("x".to_string()),
         ]),
@@ -1756,17 +1416,10 @@ fn test_callcc() {
     //   x
     // => 11
     let i = vec![
+        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(0)]),
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Integer(0),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("+x".to_string()),
-                Value::Symbol("n".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Symbol("n".to_string())]),
             Value::from_vec(vec![
                 Value::Symbol("set!".to_string()),
                 Value::Symbol("x".to_string()),
@@ -1779,10 +1432,7 @@ fn test_callcc() {
         ]),
         Value::from_vec(vec![
             Value::Symbol("define".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("foo".to_string()),
-                Value::Symbol("k".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("k".to_string())]),
             Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(2)]),
             Value::from_vec(vec![Value::Symbol("k".to_string())]),
             Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(4)]),
@@ -1791,10 +1441,7 @@ fn test_callcc() {
             Value::Symbol("lambda".to_string()),
             null!(),
             Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(1)]),
-            Value::from_vec(vec![
-                Value::Symbol("call/cc".to_string()),
-                Value::Symbol("foo".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("call/cc".to_string()), Value::Symbol("foo".to_string())]),
             Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(8)]),
         ])]),
         Value::Symbol("x".to_string()),
@@ -1808,29 +1455,15 @@ fn test_macros() {
     let i = vec![
         Value::from_vec(vec![
             Value::Symbol("define-syntax-rule".to_string()),
-            Value::from_vec(vec![
-                Value::Symbol("incr".to_string()),
-                Value::Symbol("x".to_string()),
-            ]),
+            Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("x".to_string())]),
             Value::from_vec(vec![
                 Value::Symbol("set!".to_string()),
                 Value::Symbol("x".to_string()),
-                Value::from_vec(vec![
-                    Value::Symbol("+".to_string()),
-                    Value::Symbol("x".to_string()),
-                    Value::Integer(1),
-                ]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
             ]),
         ]),
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::Symbol("a".to_string()),
-            Value::Integer(1),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("incr".to_string()),
-            Value::Symbol("a".to_string()),
-        ]),
+        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("a".to_string()), Value::Integer(1)]),
+        Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("a".to_string())]),
         Value::Symbol("a".to_string()),
     ];
     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(2));
@@ -1840,13 +1473,7 @@ fn test_macros() {
 fn test_list_iter() {
     let l = List::Cell(
         Box::new(Value::Integer(1)),
-        Box::new(List::Cell(
-            Box::new(Value::Integer(2)),
-            Box::new(List::Cell(
-                Box::new(Value::Integer(3)),
-                Box::new(List::Null),
-            )),
-        )),
+        Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
     );
     let mut x = 0;
     for i in l {
@@ -1860,13 +1487,7 @@ fn test_list_iter() {
 fn test_list_to_string() {
     let l = List::Cell(
         Box::new(Value::Integer(1)),
-        Box::new(List::Cell(
-            Box::new(Value::Integer(2)),
-            Box::new(List::Cell(
-                Box::new(Value::Integer(3)),
-                Box::new(List::Null),
-            )),
-        )),
+        Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
     );
     assert_eq!(l.to_string(), "(1 2 3)");
 }

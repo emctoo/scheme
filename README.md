@@ -1,5 +1,5 @@
-RustyScheme
-===========
+Scheme
+======
 
 A toy Scheme interpreter written in Rust, loosely based on the [R5RS Specification](http://www.schemers.org/Documents/Standards/R5RS/HTML/) with a bit of [Racket](http://docs.racket-lang.org/reference/index.html) thrown in as well.
 
@@ -22,15 +22,8 @@ There are two versions of the interpreter:
 
 In the future, I may develop an interpreter that manages its own stack and/or heap, and possibly a bytecode VM & compiler as well for comparison.
 
-Requirements
-------------
-
-* Rust 1.0-beta or later
-
 Usage
 -----
-
-Download and install Rust 1.0 from http://www.rust-lang.org/install.html.
 
 To start a REPL using the default CPS interpreter:
 

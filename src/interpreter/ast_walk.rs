@@ -31,6 +31,7 @@ impl Interpreter {
 pub enum Value {
     Symbol(String),
     Integer(i64),
+    Float(f64),
     Boolean(bool),
     String(String),
     List(Vec<Value>),
@@ -62,6 +63,7 @@ impl Value {
         match *node {
             Node::Identifier(ref val) => Value::Symbol(val.clone()),
             Node::Integer(val) => Value::Integer(val),
+            Node::Float(val) => Value::Float(val),
             Node::Boolean(val) => Value::Boolean(val),
             Node::String(ref val) => Value::String(val.clone()),
             Node::List(ref nodes) => Value::List(Value::from_nodes(&nodes)),
@@ -74,6 +76,7 @@ impl fmt::Display for Value {
         match *self {
             Value::Symbol(ref val) => write!(f, "{}", val),
             Value::Integer(val) => write!(f, "{}", val),
+            Value::Float(val) => write!(f, "{}", val),
             Value::Boolean(val) => write!(f, "#{}", if val { "t" } else { "f" }),
             Value::String(ref val) => write!(f, "{}", val),
             Value::List(ref list) => {
@@ -109,9 +112,7 @@ impl Clone for Function {
     fn clone(&self) -> Function {
         match *self {
             Function::Native(ref func) => Function::Native(*func),
-            Function::Scheme(ref a, ref b, ref env) => {
-                Function::Scheme(a.clone(), b.clone(), env.clone())
-            }
+            Function::Scheme(ref a, ref b, ref env) => Function::Scheme(a.clone(), b.clone(), env.clone()),
         }
     }
 }
@@ -153,10 +154,7 @@ impl Environment {
         };
         let predefined_functions = &[
             ("define", Function::Native(native_define)),
-            (
-                "define-syntax-rule",
-                Function::Native(native_define_syntax_rule),
-            ),
+            ("define-syntax-rule", Function::Native(native_define_syntax_rule)),
             ("begin", Function::Native(native_begin)),
             ("let", Function::Native(native_let)),
             ("set!", Function::Native(native_set)),
@@ -191,8 +189,7 @@ impl Environment {
         ];
         for item in predefined_functions.iter() {
             let (name, ref func) = *item;
-            env.define(name.to_string(), Value::Procedure(func.clone()))
-                .unwrap();
+            env.define(name.to_string(), Value::Procedure(func.clone())).unwrap();
         }
         Rc::new(RefCell::new(env))
     }
@@ -269,6 +266,7 @@ fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value,
             None => runtime_error!("Identifier not found: {:?}", value),
         },
         &Value::Integer(v) => Ok(Value::Integer(v)),
+        &Value::Float(v) => Ok(Value::Float(v)),
         &Value::Boolean(v) => Ok(Value::Boolean(v)),
         &Value::String(ref v) => Ok(Value::String(v.clone())),
         &Value::List(ref vec) => {
@@ -283,14 +281,11 @@ fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value,
     }
 }
 
-fn quote_value(
-    value: &Value,
-    quasi: bool,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn quote_value(value: &Value, quasi: bool, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match value {
         &Value::Symbol(ref v) => Ok(Value::Symbol(v.clone())),
         &Value::Integer(v) => Ok(Value::Integer(v)),
+        &Value::Float(v) => Ok(Value::Float(v)),
         &Value::Boolean(v) => Ok(Value::Boolean(v)),
         &Value::String(ref v) => Ok(Value::String(v.clone())),
         &Value::List(ref vec) => {
@@ -301,10 +296,7 @@ fn quote_value(
                 }
                 evaluate_value(&vec[1], env.clone())
             } else {
-                let res: Result<Vec<Value>, RuntimeError> = vec
-                    .iter()
-                    .map(|v| quote_value(v, quasi, env.clone()))
-                    .collect();
+                let res: Result<Vec<Value>, RuntimeError> = vec.iter().map(|v| quote_value(v, quasi, env.clone())).collect();
                 let new_vec = res?;
                 Ok(Value::List(new_vec))
             }
@@ -314,10 +306,7 @@ fn quote_value(
     }
 }
 
-fn evaluate_expression(
-    values: &Vec<Value>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn evaluate_expression(values: &Vec<Value>, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     if values.len() == 0 {
         runtime_error!("Can't evaluate an empty expression: {:?}", values);
     }
@@ -325,27 +314,16 @@ fn evaluate_expression(
     match first {
         Value::Procedure(f) => apply_function(&f, &values[1..], env.clone()),
         Value::Macro(a, b) => expand_macro(a, b, &values[1..], env.clone()),
-        _ => runtime_error!(
-            "First element in an expression must be a procedure: {:?}",
-            first
-        ),
+        _ => runtime_error!("First element in an expression must be a procedure: {:?}", first),
     }
 }
 
-fn apply_function(
-    func: &Function,
-    args: &[Value],
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn apply_function(func: &Function, args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match func {
         &Function::Native(native_fn) => native_fn(args, env),
         &Function::Scheme(ref arg_names, ref body, ref func_env) => {
             if arg_names.len() != args.len() {
-                runtime_error!(
-                    "Must supply exactly {} arguments to function: {:?}",
-                    arg_names.len(),
-                    args
-                );
+                runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
             }
 
             // create a new, child environment for the procedure and define the arguments as local variables
@@ -362,12 +340,7 @@ fn apply_function(
     }
 }
 
-fn expand_macro(
-    arg_names: Vec<String>,
-    body: Vec<Value>,
-    args: &[Value],
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn expand_macro(arg_names: Vec<String>, body: Vec<Value>, args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     let mut substitutions = HashMap::new();
     for (name, arg) in arg_names.iter().zip(args.iter()) {
         substitutions.insert(name.clone(), arg.clone());
@@ -376,20 +349,11 @@ fn expand_macro(
     evaluate_values(&expanded, env)
 }
 
-fn expand_macro_substitute_values(
-    values: &[Value],
-    substitutions: HashMap<String, Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    values
-        .iter()
-        .map(|n| expand_macro_substitute_value(n, substitutions.clone()))
-        .collect()
+fn expand_macro_substitute_values(values: &[Value], substitutions: HashMap<String, Value>) -> Result<Vec<Value>, RuntimeError> {
+    values.iter().map(|n| expand_macro_substitute_value(n, substitutions.clone())).collect()
 }
 
-fn expand_macro_substitute_value(
-    value: &Value,
-    substitutions: HashMap<String, Value>,
-) -> Result<Value, RuntimeError> {
+fn expand_macro_substitute_value(value: &Value, substitutions: HashMap<String, Value>) -> Result<Value, RuntimeError> {
     let res = match value {
         &Value::Symbol(ref s) => {
             if substitutions.contains_key(s) {
@@ -417,10 +381,7 @@ fn native_define(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
             // if a list is the second argument, it's shortcut for defining a procedure
             // (define (<name> <args>) <body>) == (define <name> (lambda (<args>) <body>)
             if list.len() < 1 {
-                runtime_error!(
-                    "Must supply at least one argument in list part of define: {:?}",
-                    list
-                );
+                runtime_error!("Must supply at least one argument in list part of define: {:?}", list);
             }
             match list[0] {
                 Value::Symbol(ref name) => {
@@ -446,24 +407,15 @@ fn native_define(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
     Ok(null!())
 }
 
-fn native_define_syntax_rule(
-    args: &[Value],
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn native_define_syntax_rule(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        runtime_error!(
-            "Must supply exactly two arguments to define-syntax-rule: {:?}",
-            args
-        );
+        runtime_error!("Must supply exactly two arguments to define-syntax-rule: {:?}", args);
     }
     let (name, val) = match args[0] {
         Value::List(ref list) => {
             // (define-syntax-rule (<name> <args>) <template>)
             if list.len() < 1 {
-                runtime_error!(
-                    "Must supply at least one argument in list part of define-syntax-rule: {:?}",
-                    list
-                );
+                runtime_error!("Must supply at least one argument in list part of define-syntax-rule: {:?}", list);
             }
             match list[0] {
                 Value::Symbol(ref name) => {
@@ -471,10 +423,7 @@ fn native_define_syntax_rule(
                         .iter()
                         .map(|i| match *i {
                             Value::Symbol(ref s) => Ok(s.clone()),
-                            _ => runtime_error!(
-                                "Unexpected argument in define-syntax-rule arguments: {:?}",
-                                i
-                            ),
+                            _ => runtime_error!("Unexpected argument in define-syntax-rule arguments: {:?}", i),
                         })
                         .collect();
                     let arg_names = res?;
@@ -485,10 +434,7 @@ fn native_define_syntax_rule(
                 _ => runtime_error!("Must supply a symbol in list part of define: {:?}", list),
             }
         }
-        _ => runtime_error!(
-            "Unexpected value for pattern in define-syntax-rule: {:?}",
-            args
-        ),
+        _ => runtime_error!("Unexpected value for pattern in define-syntax-rule: {:?}", args),
     };
 
     env.borrow_mut().define(name.clone(), val)?;
@@ -515,10 +461,7 @@ fn native_let(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, Ru
                 match *i {
                     Value::List(ref entry) => {
                         if entry.len() != 2 {
-                            runtime_error!(
-                                "let expression values must have exactly 2 params: {:?}",
-                                entry
-                            );
+                            runtime_error!("let expression values must have exactly 2 params: {:?}", entry);
                         }
                         let name = match entry[0] {
                             Value::Symbol(ref x) => x,
@@ -571,11 +514,7 @@ fn native_lambda(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value,
         _ => runtime_error!("Unexpected value for arguments in lambda: {:?}", args),
     };
     let body = (&args[1..]).to_vec();
-    Ok(Value::Procedure(Function::Scheme(
-        arg_names,
-        body,
-        env.clone(),
-    )))
+    Ok(Value::Procedure(Function::Scheme(arg_names, body, env.clone())))
 }
 
 fn native_if(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
@@ -670,10 +609,7 @@ fn native_lessthan(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Valu
     Ok(Value::Boolean(l < r))
 }
 
-fn native_greaterthan(
-    args: &[Value],
-    env: Rc<RefCell<Environment>>,
-) -> Result<Value, RuntimeError> {
+fn native_greaterthan(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         runtime_error!("Must supply exactly two arguments to >: {:?}", args);
     }
@@ -742,10 +678,7 @@ fn native_null(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
 }
 
 fn native_list(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
-    let res: Result<Vec<Value>, RuntimeError> = args
-        .iter()
-        .map(|n| evaluate_value(n, env.clone()))
-        .collect();
+    let res: Result<Vec<Value>, RuntimeError> = args.iter().map(|n| evaluate_value(n, env.clone())).collect();
     let elements = res?;
     Ok(Value::List(elements))
 }
@@ -857,10 +790,7 @@ fn native_apply(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
     };
     let func_args = match evaluate_value(&args[1], env.clone())? {
         Value::List(func_args) => func_args,
-        _ => runtime_error!(
-            "Second argument to apply must be a list of arguments: {:?}",
-            args
-        ),
+        _ => runtime_error!("Second argument to apply must be a list of arguments: {:?}", args),
     };
     apply_function(&func, &func_args, env.clone())
 }
@@ -927,52 +857,55 @@ fn native_newline(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value
     Ok(null!())
 }
 
-#[test]
-fn test_interpreter_global_variables() {
-    assert_eq!(
-        new()
-            .run(&[
-                Node::List(vec![
-                    Node::Identifier("define".to_string()),
-                    Node::Identifier("x".to_string()),
-                    Node::Integer(2)
-                ]),
-                Node::List(vec![
-                    Node::Identifier("+".to_string()),
-                    Node::Identifier("x".to_string()),
-                    Node::Identifier("x".to_string()),
-                    Node::Identifier("x".to_string())
-                ])
-            ])
-            .unwrap(),
-        Value::Integer(6)
-    );
-}
+#[cfg(test)]
+mod tests {
+    use crate::interpreter::ast_walk::{new, Value};
+    use crate::reader::parser::Node;
 
-#[test]
-fn test_interpreter_global_function_definition() {
-    assert_eq!(
-        new()
-            .run(&[
-                Node::List(vec![
-                    Node::Identifier("define".to_string()),
-                    Node::Identifier("double".to_string()),
+    #[test]
+    fn test_interpreter_global_variables() {
+        assert_eq!(
+            new()
+                .run(&[
                     Node::List(vec![
-                        Node::Identifier("lambda".to_string()),
-                        Node::List(vec![Node::Identifier("x".to_string())]),
-                        Node::List(vec![
-                            Node::Identifier("+".to_string()),
-                            Node::Identifier("x".to_string()),
-                            Node::Identifier("x".to_string())
-                        ])
+                        Node::Identifier("define".to_string()),
+                        Node::Identifier("x".to_string()),
+                        Node::Integer(2)
+                    ]),
+                    Node::List(vec![
+                        Node::Identifier("+".to_string()),
+                        Node::Identifier("x".to_string()),
+                        Node::Identifier("x".to_string()),
+                        Node::Identifier("x".to_string())
                     ])
-                ]),
-                Node::List(vec![
-                    Node::Identifier("double".to_string()),
-                    Node::Integer(8)
                 ])
-            ])
-            .unwrap(),
-        Value::Integer(16)
-    );
+                .unwrap(),
+            Value::Integer(6)
+        );
+    }
+
+    #[test]
+    fn test_interpreter_global_function_definition() {
+        assert_eq!(
+            new()
+                .run(&[
+                    Node::List(vec![
+                        Node::Identifier("define".to_string()),
+                        Node::Identifier("double".to_string()),
+                        Node::List(vec![
+                            Node::Identifier("lambda".to_string()),
+                            Node::List(vec![Node::Identifier("x".to_string())]),
+                            Node::List(vec![
+                                Node::Identifier("+".to_string()),
+                                Node::Identifier("x".to_string()),
+                                Node::Identifier("x".to_string())
+                            ])
+                        ])
+                    ]),
+                    Node::List(vec![Node::Identifier("double".to_string()), Node::Integer(8)])
+                ])
+                .unwrap(),
+            Value::Integer(16)
+        );
+    }
 }

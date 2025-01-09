@@ -15,6 +15,7 @@ pub enum Token {
     Unquote,
     Identifier(String),
     Integer(i64),
+    Float(f64),
     Boolean(bool),
     String(String),
 }
@@ -93,7 +94,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     loop {
                         match self.current() {
-                            Some(c) if c == '\n' => {
+                            Some('\n') => {
                                 self.advance();
                                 break;
                             }
@@ -129,12 +130,16 @@ impl<'a> Lexer<'a> {
                         Some('0'..='9') => {
                             // skip past the +/- symbol and parse the number
                             self.advance();
-                            let val = self.parse_number()?;
-                            self.tokens.push(Token::Integer(if c == '-' { -1 * val } else { val }));
+
+                            // let val = self.parse_integer()?;
+                            // self.tokens.push(Token::Integer(if c == '-' { -val } else { val }));
+                            let is_negative = c == '-';
+                            let token = self.parse_number(is_negative)?;
+                            self.tokens.push(token);
                             self.parse_delimiter()?;
                         }
                         _ => {
-                            // not followed by a digit, must be an identifier
+                            // not followed by a digit, 只能是 identifier
                             self.tokens.push(Token::Identifier(c.to_string()));
                             self.advance();
                             self.parse_delimiter()?;
@@ -148,8 +153,10 @@ impl<'a> Lexer<'a> {
                 }
                 '0'..='9' => {
                     // don't advance -- let parse_number advance as needed
-                    let val = self.parse_number()?;
-                    self.tokens.push(Token::Integer(val));
+                    // let val = self.parse_integer()?;
+                    // self.tokens.push(Token::Integer(val));
+                    let token = self.parse_number(false)?;
+                    self.tokens.push(token);
                     self.parse_delimiter()?;
                 }
                 '\"' => {
@@ -170,7 +177,41 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    fn parse_number(&mut self) -> Result<i64, SyntaxError> {
+    fn parse_number(&mut self, is_negative: bool) -> Result<Token, SyntaxError> {
+        let mut is_float_number = false;
+        let mut s = String::new();
+        while let Some(c) = self.current() {
+            match c {
+                '0'..='9' => {
+                    s.push(c);
+                    self.advance();
+                }
+                '.' => {
+                    if is_float_number {
+                        // 不可能又遇到小数点
+                        syntax_error!(self, "Unexpected character: {}", c);
+                    }
+                    is_float_number = true;
+                    s.push(c);
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+        if is_float_number {
+            match s.parse::<f64>() {
+                Ok(value) => Ok(Token::Float(if is_negative { -value } else { value })),
+                Err(_) => syntax_error!(self, "Not a float: {}", self.current().unwrap()),
+            }
+        } else {
+            match s.parse::<i64>() {
+                Ok(value) => Ok(Token::Integer(if is_negative { -value } else { value })),
+                Err(_) => syntax_error!(self, "Not an integer: {}", self.current().unwrap()),
+            }
+        }
+    }
+
+    fn parse_integer(&mut self) -> Result<i64, SyntaxError> {
         let mut s = String::new();
         while let Some(c) = self.current() {
             match c {
@@ -183,9 +224,7 @@ impl<'a> Lexer<'a> {
         }
         match s.parse() {
             Ok(value) => Ok(value),
-            Err(_) => {
-                syntax_error!(self, "Not a number: {}", self.current().unwrap());
-            }
+            Err(_) => syntax_error!(self, "Not a number: {}", self.current().unwrap()),
         }
     }
 
@@ -335,7 +374,7 @@ fn test_lexer_booleans() {
 #[test]
 fn test_lexer_identifiers() {
     for identifier in ["*", "<", "<=", "if", "while", "$t$%*=:t059s"].iter() {
-        assert_eq!(tokenize(*identifier).unwrap(), vec![Token::Identifier(identifier.to_string())]);
+        assert_eq!(tokenize(identifier).unwrap(), vec![Token::Identifier(identifier.to_string())]);
     }
 }
 
@@ -344,6 +383,23 @@ fn test_lexer_strings() {
     assert_eq!(tokenize("\"hello\"").unwrap(), vec![Token::String("hello".to_string())]);
     assert_eq!(tokenize("\"a _ $ snthoeau(*&G#$()*^!\"").unwrap(), vec![Token::String("a _ $ snthoeau(*&G#$()*^!".to_string())]);
     assert_eq!(tokenize("\"truncated").err().unwrap().to_string(), "SyntaxError: Expected end quote, but found EOF instead (line: 1, column: 11)");
+}
+
+#[test]
+fn test_lexer_integer() {
+    assert_eq!(tokenize("42").unwrap(), vec![Token::Integer(42)]);
+    assert_eq!(tokenize("+42").unwrap(), vec![Token::Integer(42)]);
+    assert_eq!(tokenize("-42").unwrap(), vec![Token::Integer(-42)]);
+}
+
+#[test]
+fn test_lexer_float() {
+    assert_eq!(tokenize("0.42").unwrap(), vec![Token::Float(0.42)]);
+    assert_eq!(tokenize("+0.42").unwrap(), vec![Token::Float(0.42)]);
+    assert_eq!(tokenize("-0.42").unwrap(), vec![Token::Float(-0.42)]);
+    assert_eq!(tokenize("42.0").unwrap(), vec![Token::Float(42.0)]);
+
+    assert!(tokenize("0.1.").is_err());
 }
 
 #[test]
