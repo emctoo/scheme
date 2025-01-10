@@ -1,53 +1,7 @@
-extern crate libc;
-
 use clap::{Arg, Command};
+use reedline::{DefaultPrompt, DefaultPromptSegment, FileBackedHistory, Reedline, Signal};
 use scheme::interpreter::interpreter::{self};
-use std::ffi::CStr;
-use std::ffi::CString;
 use std::{fs::File, io::Read, path::Path};
-
-#[link(name = "readline")]
-extern "C" {
-    fn readline(prompt: *const libc::c_char) -> *const libc::c_char;
-    fn add_history(entry: *const libc::c_char);
-}
-
-fn prompt_for_input(prompt: &str) -> Option<String> {
-    let prompt_c_str = CString::new(prompt).unwrap();
-
-    unsafe {
-        // wait for enter/CTRL-C/CTRL-D
-        let raw = readline(prompt_c_str.as_ptr());
-        if raw.is_null() {
-            return None;
-        }
-
-        // parse into String and return
-        let buf = CStr::from_ptr(raw).to_bytes();
-        let cs = String::from_utf8(buf.to_vec()).unwrap();
-
-        // add to shell history unless it's an empty string
-        if !cs.is_empty() {
-            add_history(raw);
-        }
-
-        Some(cs)
-    }
-}
-
-fn start<F: Fn(String) -> Result<String, String>>(prompt: &str, f: F) {
-    loop {
-        match prompt_for_input(prompt) {
-            Some(input) => {
-                if !input.is_empty() {
-                    let result = f(input);
-                    println!("{}", result.unwrap_or_else(|e| e));
-                }
-            }
-            None => return,
-        };
-    }
-}
 
 fn main() {
     let matches = Command::new("Scheme")
@@ -76,7 +30,31 @@ fn main() {
                 Err(e) => println!("{}", e),
             }
         }
-        None => start("> ", |code| interpreter.execute(&code)),
+        None => repl(interpreter),
+    }
+}
+
+fn repl(interpreter: interpreter::Interpreter) {
+    let history = Box::new(FileBackedHistory::with_file(1000, ".scheme_history".into()).expect("Error configuring history with file"));
+    let mut line_editor = Reedline::create().with_history(history);
+    let prompt = DefaultPrompt::new(DefaultPromptSegment::Basic("scheme ".into()), DefaultPromptSegment::Empty);
+    loop {
+        let sig = line_editor.read_line(&prompt);
+        match sig {
+            Ok(Signal::Success(buffer)) => {
+                interpreter
+                    .execute(&buffer)
+                    .map(|res| println!("{}", res))
+                    .unwrap_or_else(|e| println!("{}", e));
+            }
+            Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+                println!("\n- bye.");
+                break;
+            }
+            x => {
+                println!("unknown event: {:?}", x);
+            }
+        }
     }
 }
 
