@@ -26,8 +26,8 @@ fn main() {
             let mut contents = String::new();
             file.read_to_string(&mut contents).unwrap();
             match interpreter.execute(&contents) {
-                Ok(_) => {}
-                Err(e) => println!("{}", e),
+                Ok(res) => println!("{}", res),
+                Err(e) => println!("Error: {}", e),
             }
         }
         None => repl(interpreter),
