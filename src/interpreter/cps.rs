@@ -57,6 +57,73 @@ pub enum Value {
     Continuation(Box<Continuation>),
 }
 
+impl std::ops::Add for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a + b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a + b as f64)),
+            (a, b) => runtime_error!("Cannot `+` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Sub for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a - b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a - b as f64)),
+            (a, b) => runtime_error!("Cannot `-` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Mul for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a * b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a * b as f64)),
+            (a, b) => runtime_error!("Cannot `*` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Div for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a / b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a / b as f64)),
+            (a, b) => runtime_error!("Cannot `/` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Neg for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Value::Integer(a) => Ok(Value::Integer(-a)),
+            Value::Float(a) => Ok(Value::Float(-a)),
+            x => runtime_error!("Cannot `-` {:?}", x),
+        }
+    }
+}
 impl Value {
     fn from_vec(vec: Vec<Value>) -> Value {
         List::from_vec(vec).to_value()
@@ -705,25 +772,34 @@ impl Environment {
             parent: None,
             values: HashMap::new(),
         };
-        env.define("+".to_string(), Value::Procedure(Function::Native("+")))?;
-        env.define("-".to_string(), Value::Procedure(Function::Native("-")))?;
-        env.define("*".to_string(), Value::Procedure(Function::Native("*")))?;
-        env.define("/".to_string(), Value::Procedure(Function::Native("/")))?;
-        env.define("<".to_string(), Value::Procedure(Function::Native("<")))?;
-        env.define(">".to_string(), Value::Procedure(Function::Native(">")))?;
-        env.define("=".to_string(), Value::Procedure(Function::Native("=")))?;
-        env.define("null?".to_string(), Value::Procedure(Function::Native("null?")))?;
-        env.define("list".to_string(), Value::Procedure(Function::Native("list")))?;
-        env.define("car".to_string(), Value::Procedure(Function::Native("car")))?;
-        env.define("cdr".to_string(), Value::Procedure(Function::Native("cdr")))?;
-        env.define("cons".to_string(), Value::Procedure(Function::Native("cons")))?;
-        env.define("append".to_string(), Value::Procedure(Function::Native("append")))?;
-        env.define("error".to_string(), Value::Procedure(Function::Native("error")))?;
-        env.define("write".to_string(), Value::Procedure(Function::Native("write")))?;
-        env.define("display".to_string(), Value::Procedure(Function::Native("display")))?;
-        env.define("displayln".to_string(), Value::Procedure(Function::Native("displayln")))?;
-        env.define("print".to_string(), Value::Procedure(Function::Native("print")))?;
-        env.define("newline".to_string(), Value::Procedure(Function::Native("newline")))?;
+
+        let natives = vec![
+            "+",
+            "-",
+            "*",
+            "/",
+            "<",
+            ">",
+            "=",
+            "null?",
+            // numbers: number? complex? real? rational? integer?
+            "integer?",
+            "float?",
+            "list",
+            "car",
+            "cdr",
+            "cons",
+            "append",
+            "error",
+            "write",
+            "display",
+            "displayln",
+            "print",
+            "newline",
+        ];
+        for name in natives {
+            env.define(name.into(), Value::Procedure(Function::Native(name)))?;
+        }
         Ok(Rc::new(RefCell::new(env)))
     }
 
@@ -786,34 +862,37 @@ impl Environment {
 
 fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
     match f {
-        "+" => {
-            let sum = args.into_iter().fold(Ok(0), |s, a| match s {
-                Ok(z) => Ok(z + a.as_integer()?),
-                _ => s,
-            })?;
-            Ok(Value::Integer(sum))
-        }
-        "-" => {
-            if args.len() != 2 {
-                runtime_error!("Must supply exactly two arguments to -: {:?}", args);
+        "+" => args.into_iter().try_fold(Value::Integer(0), |acc, arg| acc + arg),
+        "*" => args.into_iter().try_fold(Value::Integer(1), |acc, arg| acc * arg),
+        "-" => match args.len() {
+            0 => runtime_error!("`-` requires at least one argument"),
+            1 => {
+                let val: Value = args.unpack1()?; // unpack1(): -> Result<Value, RuntimeError>
+                -val
+                // why not -args.unpack1()?
             }
-            let (l, r) = args.unpack2()?;
-            Ok(Value::Integer(l.as_integer()? - r.as_integer()?))
-        }
-        "*" => {
-            let product = args.into_iter().fold(Ok(1), |s, a| match s {
-                Ok(z) => Ok(z * a.as_integer()?),
-                _ => s,
-            })?;
-            Ok(Value::Integer(product))
-        }
-        "/" => {
-            if args.len() != 2 {
-                runtime_error!("Must supply exactly two arguments to /: {:?}", args);
+            _ => {
+                let mut iter = args.into_iter();
+                let initial = iter.next().unwrap(); // it's okay because len > 1
+                iter.try_fold(initial, |acc, arg| acc - arg)
             }
-            let (l, r) = args.unpack2()?;
-            Ok(Value::Integer(l.as_integer()? / r.as_integer()?))
-        }
+        },
+        "/" => match args.len() {
+            0 => runtime_error!("`/` requires at least one argument"),
+            1 => {
+                match args.unpack1()? {
+                    // unpack1(): -> Result<Value, RuntimeError>
+                    Value::Integer(val) => Ok(Value::Float(1.0 / val as f64)),
+                    Value::Float(val) => Ok(Value::Float(1.0 / val)),
+                    val => runtime_error!("Expected a number, but got: {:?}", val),
+                }
+            }
+            _ => {
+                let mut iter = args.into_iter();
+                let initial = iter.next().unwrap(); // it's okay because len > 1
+                iter.try_fold(initial, |acc, arg| acc / arg)
+            }
+        },
         "<" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to <: {:?}", args);
@@ -842,6 +921,26 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             let v = args.unpack1()?;
             match v {
                 Value::List(l) => Ok(Value::Boolean(l.is_empty())),
+                _ => Ok(Value::Boolean(false)),
+            }
+        }
+        "integer?" => {
+            if args.len() != 1 {
+                runtime_error!("Must supply exactly one argument to integer?: {:?}", args);
+            }
+            let v = args.unpack1()?;
+            match v {
+                Value::Integer(_) => Ok(Value::Boolean(true)),
+                _ => Ok(Value::Boolean(false)),
+            }
+        }
+        "float?" => {
+            if args.len() != 1 {
+                runtime_error!("Must supply exactly one argument to real?: {:?}", args);
+            }
+            let v = args.unpack1()?;
+            match v {
+                Value::Float(_) => Ok(Value::Boolean(true)),
                 _ => Ok(Value::Boolean(false)),
             }
         }

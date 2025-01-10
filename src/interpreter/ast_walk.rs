@@ -171,6 +171,8 @@ impl Environment {
             ("and", Function::Native(native_and)),
             ("or", Function::Native(native_or)),
             ("null?", Function::Native(native_null)),
+            ("integer?", Function::Native(native_integer_pred)),
+            ("float?", Function::Native(native_float_pred)),
             ("list", Function::Native(native_list)),
             ("car", Function::Native(native_car)),
             ("cdr", Function::Native(native_cdr)),
@@ -673,6 +675,28 @@ fn native_null(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
     let v = evaluate_value(&args[0], env.clone())?;
     match v {
         Value::List(l) => Ok(Value::Boolean(l.len() == 0)),
+        _ => Ok(Value::Boolean(false)),
+    }
+}
+
+fn native_integer_pred(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        runtime_error!("Must supply exactly one argument to integer?: {:?}", args);
+    }
+    let v = evaluate_value(&args[0], env.clone())?;
+    match v {
+        Value::Integer(_) => Ok(Value::Boolean(true)),
+        _ => Ok(Value::Boolean(false)),
+    }
+}
+
+fn native_float_pred(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        runtime_error!("Must supply exactly one argument to float?: {:?}", args);
+    }
+    let v = evaluate_value(&args[0], env.clone())?;
+    match v {
+        Value::Float(_) => Ok(Value::Boolean(true)),
         _ => Ok(Value::Boolean(false)),
     }
 }

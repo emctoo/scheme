@@ -185,6 +185,8 @@ test!(null6, "(null? #f)", "#f");
 test!(null7, "(null? 'a)", "#f");
 test!(null8, "(null? \"a\")", "#f");
 
+test!(integer1, "(integer? 42)", "#t");
+
 test!(cons1, "(cons 1 '())", "(1)");
 test!(cons2, "(cons 1 '(2))", "(1 2)");
 test!(cons3, "(cons '(1) '(2))", "((1) 2)");
