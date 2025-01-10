@@ -6,18 +6,18 @@ use std::{fs::File, io::Read, path::Path};
 fn main() {
     let matches = Command::new("Scheme")
         .arg(
-            Arg::new("type")
-                .short('t')
-                .long("type")
-                .help("set interpreter type")
+            Arg::new("mode")
+                .short('m')
+                .long("mode")
+                .help("interpreter mode")
                 .value_parser(["ast-walk", "cps"])
                 .default_value("cps"),
         )
         .arg(Arg::new("file").help("Input file").num_args(0..=1))
         .get_matches();
 
-    let interpreter_type = matches.get_one::<String>("type").expect("default value should exist");
-    let interpreter = interpreter::new(interpreter_type);
+    let interpreter_mode = matches.get_one::<String>("mode").unwrap();
+    let interpreter = interpreter::new(interpreter_mode);
 
     match matches.get_one::<String>("file") {
         Some(filename) => {
@@ -35,7 +35,7 @@ fn main() {
 }
 
 fn repl(interpreter: interpreter::Interpreter) {
-    let history = Box::new(FileBackedHistory::with_file(1000, ".scheme_history".into()).expect("Error configuring history with file"));
+    let history = Box::new(FileBackedHistory::with_file(1000, ".scheme_history".into()).unwrap());
     let mut line_editor = Reedline::create().with_history(history);
     let prompt = DefaultPrompt::new(DefaultPromptSegment::Basic("scheme ".into()), DefaultPromptSegment::Empty);
     loop {
@@ -45,14 +45,14 @@ fn repl(interpreter: interpreter::Interpreter) {
                 interpreter
                     .execute(&buffer)
                     .map(|res| println!("{}", res))
-                    .unwrap_or_else(|e| println!("{}", e));
+                    .unwrap_or_else(|e| println!("Executing error: {}", e));
             }
             Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
-                println!("\n- bye.");
+                println!("\n- Bye.");
                 break;
             }
             x => {
-                println!("unknown event: {:?}", x);
+                println!("Unknown event: {:?}", x);
             }
         }
     }
