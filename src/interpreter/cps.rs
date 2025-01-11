@@ -22,8 +22,7 @@ impl Interpreter {
     }
 
     pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> {
-        let exprs = List::from_nodes(nodes);
-        process(exprs, self.root.clone())
+        process(List::from_nodes(nodes), self.root.clone())
     }
 }
 
@@ -653,14 +652,14 @@ impl Continuation {
             Continuation::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
             Continuation::ContinueQuasiquoting(rest, acc, env, k) => cont_continue_quasiquoting(val, rest, acc, env, k),
 
-            Continuation::Eval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
-            Continuation::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::Apply(val, k))),
-
             Continuation::Apply(f, k) => apply(f, val.as_list()?, k),
+            Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
 
             Continuation::EvalAnd(rest, env, k) => cont_eval_and(val, rest, env, k),
             Continuation::EvalOr(rest, env, k) => cont_eval_or(val, rest, env, k),
-            Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
+
+            Continuation::Eval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
+            Continuation::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::Apply(val, k))),
             Continuation::Return => Ok(Trampoline::Land(val)),
         }
     }
@@ -760,7 +759,8 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                 }
             }
 
-            // QuasiBounce is for quasiquoting mode -- it just passes the value right through, UNLESS it's of the form (unquote X), in which case it switches back to regular evaluating mode using X as the value.
+            // QuasiBounce is for quasiquoting mode
+            // it just passes the value right through, UNLESS it's of the form (unquote X), in which case it switches back to regular evaluating mode using X as the value.
             Trampoline::QuasiBounce(a, env, k) => {
                 b = match a {
                     Value::List(list) => match list.shift() {
@@ -777,13 +777,13 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                 }
             }
 
-            // Run doesn't evaluate the value, it just runs k with it. It's similar to running inline, but bounces to avoid growing the stack.
+            // Run doesn't evaluate the value, it just runs k with it.
+            // It's similar to running inline, but bounces to avoid growing the stack.
             Trampoline::Run(a, k) => b = k.run(a)?,
 
-            // Land just returns the value. It should only ever be created at the very beginning of process, and will be the last Trampoline value called.
-            Trampoline::Land(a) => {
-                return Ok(a);
-            }
+            // Land just returns the value.
+            // It should only ever be created at the very beginning of process, and will be the last Trampoline value called.
+            Trampoline::Land(a) => return Ok(a),
         }
     }
 }
