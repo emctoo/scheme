@@ -211,23 +211,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn parse_integer(&mut self) -> Result<i64, SyntaxError> {
-        let mut s = String::new();
-        while let Some(c) = self.current() {
-            match c {
-                '0'..='9' => {
-                    s.push(c);
-                    self.advance();
-                }
-                _ => break,
-            }
-        }
-        match s.parse() {
-            Ok(value) => Ok(value),
-            Err(_) => syntax_error!(self, "Not a number: {}", self.current().unwrap()),
-        }
-    }
-
     fn parse_boolean(&mut self) -> Result<bool, SyntaxError> {
         if self.current() != Some('#') {
             syntax_error!(self, "Unexpected character: {}", self.current().unwrap())
@@ -243,9 +226,7 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(false)
             }
-            _ => {
-                syntax_error!(self, "Unexpected character when looking for t/f: {}", self.current().unwrap())
-            }
+            _ => syntax_error!(self, "Unexpected character when looking for t/f: {}", self.current().unwrap()),
         }
     }
 

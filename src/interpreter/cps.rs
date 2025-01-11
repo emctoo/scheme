@@ -3,7 +3,6 @@ use crate::reader::parser::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::iter;
 use std::rc::Rc;
 use std::vec;
 
@@ -124,6 +123,7 @@ impl std::ops::Neg for Value {
         }
     }
 }
+
 impl Value {
     fn from_vec(vec: Vec<Value>) -> Value {
         List::from_vec(vec).to_value()
@@ -136,7 +136,7 @@ impl Value {
             Node::Float(val) => Value::Float(val),
             Node::Boolean(val) => Value::Boolean(val),
             Node::String(ref val) => Value::String(val.clone()),
-            Node::List(ref nodes) => Value::List(List::from_nodes(&nodes)),
+            Node::List(ref nodes) => Value::List(List::from_nodes(nodes)),
         }
     }
 
@@ -236,32 +236,6 @@ pub enum SpecialForm {
     DefineSyntaxRule,
 }
 
-pub enum Trampoline {
-    Bounce(Value, Rc<RefCell<Environment>>, Continuation),
-    QuasiBounce(Value, Rc<RefCell<Environment>>, Continuation),
-    Run(Value, Continuation),
-    Land(Value),
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum Continuation {
-    EvaluateExpressions(List, Rc<RefCell<Environment>>, Box<Continuation>),
-    BeginFunc(List, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateIf(Value, Value, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateDefine(String, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateSet(String, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
-    ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
-    ExecuteEval(Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
-    ExecuteApply(Value, Box<Continuation>),
-    EvaluateAnd(List, Rc<RefCell<Environment>>, Box<Continuation>),
-    EvaluateOr(List, Rc<RefCell<Environment>>, Box<Continuation>),
-    ExecuteCallCC(Box<Continuation>),
-    Return,
-}
-
 #[derive(Debug)]
 pub struct RuntimeError {
     message: String,
@@ -288,10 +262,9 @@ macro_rules! null {
 
 impl List {
     fn from_vec(mut vec: Vec<Value>) -> List {
-        if vec.len() > 0 {
+        if !vec.is_empty() {
             let mut out = List::Null;
-            while vec.len() > 0 {
-                let v = vec.pop().unwrap();
+            while let Some(v) = vec.pop() {
                 out = List::Cell(Box::new(v), Box::new(out));
             }
             out
@@ -322,8 +295,8 @@ impl List {
 
     fn len(&self) -> usize {
         match self {
-            &List::Cell(_, ref cdr) => 1 + cdr.len(),
-            &List::Null => 0,
+            List::Cell(_, ref cdr) => 1 + cdr.len(),
+            List::Null => 0,
         }
     }
 
@@ -367,22 +340,27 @@ impl List {
     }
 
     fn to_vec(self) -> Vec<Value> {
-        let mut out = vec![];
-        let mut l = self;
-        loop {
-            match l.shift() {
-                Some((car, cdr)) => {
-                    out.push(car);
-                    l = cdr;
-                }
-                None => break,
-            }
-        }
-        out
+        self.into_iter().collect()
+    }
+
+    fn into_iter(self) -> ListIterator {
+        ListIterator(self)
     }
 }
 
-impl iter::IntoIterator for List {
+struct ListIterator(List);
+
+impl Iterator for ListIterator {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (car, cdr) = <List as Clone>::clone(&self.0).shift()?;
+        self.0 = cdr;
+        Some(car)
+    }
+}
+
+impl IntoIterator for List {
     type Item = Value;
     type IntoIter = vec::IntoIter<Value>;
 
@@ -405,12 +383,38 @@ impl fmt::Debug for List {
     }
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub enum Continuation {
+    EvalExpr(List, Rc<RefCell<Environment>>, Box<Continuation>),
+    BeginFunc(List, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalIf(Value, Value, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalDef(String, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalSet(String, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+    ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+    ExecEval(Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
+    ExecApply(Value, Box<Continuation>),
+    EvalAnd(List, Rc<RefCell<Environment>>, Box<Continuation>),
+    EvalOr(List, Rc<RefCell<Environment>>, Box<Continuation>),
+    ExecCallCC(Box<Continuation>),
+    Return,
+}
+
+pub enum Trampoline {
+    Bounce(Value, Rc<RefCell<Environment>>, Continuation),
+    QuasiBounce(Value, Rc<RefCell<Environment>>, Continuation),
+    Run(Value, Continuation),
+    Land(Value),
+}
+
 impl Continuation {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
-            Continuation::EvaluateExpressions(rest, env, k) => {
+            Continuation::EvalExpr(rest, env, k) => {
                 if !rest.is_empty() {
-                    evaluate_expressions(rest, env, k)
+                    eval(rest, env, k)
                 } else {
                     Ok(Trampoline::Run(val, *k))
                 }
@@ -421,14 +425,14 @@ impl Continuation {
                         match f {
                             SpecialForm::If => {
                                 let (condition, if_expr, else_expr) = rest.unpack3()?;
-                                Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvaluateIf(if_expr, else_expr, env, k)))
+                                Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
                             }
                             SpecialForm::Define => {
                                 let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
                                 match car {
                                     Value::Symbol(name) => {
                                         let val = cdr.unpack1()?;
-                                        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvaluateDefine(name, env, k)))
+                                        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))
                                     }
                                     Value::List(list) => {
                                         let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
@@ -447,7 +451,7 @@ impl Continuation {
                             SpecialForm::Set => {
                                 let (name_raw, val) = rest.unpack2()?;
                                 let name = name_raw.as_symbol()?;
-                                Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvaluateSet(name, env, k)))
+                                Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name, env, k)))
                             }
                             SpecialForm::Lambda => {
                                 let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
@@ -473,10 +477,10 @@ impl Continuation {
                                     let (first_defn, rest_defns) = shift_or_error!(arg_defns, "Error in let definiton");
                                     let (defn_key, defn_val) = first_defn.as_list()?.unpack2()?;
                                     let name = defn_key.as_symbol()?;
-                                    Ok(Trampoline::Bounce(defn_val, env, Continuation::EvaluateLet(name, rest_defns, body, proc_env, k)))
+                                    Ok(Trampoline::Bounce(defn_val, env, Continuation::EvalLet(name, rest_defns, body, proc_env, k)))
                                 } else {
                                     // Let bindings were empty, just execute the body directly
-                                    evaluate_expressions(body, env, k)
+                                    eval(body, env, k)
                                 }
                             }
                             SpecialForm::Quote => {
@@ -497,27 +501,27 @@ impl Continuation {
                             }
                             SpecialForm::Eval => {
                                 let expr = rest.unpack1()?;
-                                Ok(Trampoline::Bounce(expr, env.clone(), Continuation::ExecuteEval(env, k)))
+                                Ok(Trampoline::Bounce(expr, env.clone(), Continuation::ExecEval(env, k)))
                             }
                             SpecialForm::Apply => {
                                 let (func, args) = rest.unpack2()?;
-                                Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvaluateApplyArgs(args, env, k)))
+                                Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
                             }
                             SpecialForm::Begin => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateExpressions(cdr, env, k))),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
                                 None => runtime_error!("Must provide at least one argument to a begin statement"),
                             },
                             SpecialForm::And => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateAnd(cdr, env, k))),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
                                 None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
                             },
                             SpecialForm::Or => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateOr(cdr, env, k))),
+                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
                                 None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                             },
                             SpecialForm::CallCC => {
                                 let f = rest.unpack1()?;
-                                Ok(Trampoline::Bounce(f, env, Continuation::ExecuteCallCC(k)))
+                                Ok(Trampoline::Bounce(f, env, Continuation::ExecCallCC(k)))
                             }
                             SpecialForm::DefineSyntaxRule => {
                                 let (defn, body) = rest.unpack2()?;
@@ -557,42 +561,42 @@ impl Continuation {
                         Ok(Trampoline::Bounce(expanded, env, *k))
                     }
                     _ => match rest.shift() {
-                        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateFunc(val, cdr, List::Null, env, k))),
+                        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(val, cdr, List::Null, env, k))),
                         None => apply(val, List::Null, k),
                     },
                 }
             }
-            Continuation::EvaluateFunc(f, rest, acc, env, k) => {
+            Continuation::EvalFunc(f, rest, acc, env, k) => {
                 let acc2 = acc.unshift(val);
                 match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateFunc(f, cdr, acc2, env, k))),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(f, cdr, acc2, env, k))),
                     None => apply(f, acc2.reverse(), k),
                 }
             }
-            Continuation::EvaluateIf(if_expr, else_expr, env, k) => match val {
+            Continuation::EvalIf(if_expr, else_expr, env, k) => match val {
                 Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, *k)),
                 _ => Ok(Trampoline::Bounce(if_expr, env, *k)),
             },
-            Continuation::EvaluateDefine(name, env, k) => {
+            Continuation::EvalDef(name, env, k) => {
                 env.borrow_mut().define(name, val)?;
                 Ok(Trampoline::Run(null!(), *k))
             }
-            Continuation::EvaluateSet(name, env, k) => {
+            Continuation::EvalSet(name, env, k) => {
                 env.borrow_mut().set(name, val)?;
                 Ok(Trampoline::Run(null!(), *k))
             }
-            Continuation::EvaluateLet(name, rest, body, env, k) => {
+            Continuation::EvalLet(name, rest, body, env, k) => {
                 // Define variable in let scope
                 env.borrow_mut().define(name, val)?;
                 match rest.shift() {
                     Some((next_defn, rest_defns)) => {
                         let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
                         let name = defn_key.as_symbol()?;
-                        Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvaluateLet(name, rest_defns, body, env, k)))
+                        Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
                     }
                     None => {
                         let inner_env = Environment::new_child(env);
-                        evaluate_expressions(body, inner_env, k)
+                        eval(body, inner_env, k)
                     }
                 }
             }
@@ -603,58 +607,55 @@ impl Continuation {
                     None => Ok(Trampoline::Run(acc2.reverse().to_value(), *k)),
                 }
             }
-            Continuation::ExecuteEval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
-            Continuation::EvaluateApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::ExecuteApply(val, k))),
-            Continuation::ExecuteApply(f, k) => apply(f, val.as_list()?, k),
-            Continuation::EvaluateAnd(rest, env, k) => match val {
+            Continuation::ExecEval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
+            Continuation::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::ExecApply(val, k))),
+            Continuation::ExecApply(f, k) => apply(f, val.as_list()?, k),
+            Continuation::EvalAnd(rest, env, k) => match val {
                 Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                 _ => match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateAnd(cdr, env, k))),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
                     None => Ok(Trampoline::Run(val, *k)),
                 },
             },
-            Continuation::EvaluateOr(rest, env, k) => match val {
+            Continuation::EvalOr(rest, env, k) => match val {
                 Value::Boolean(false) => match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateOr(cdr, env, k))),
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
                     None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                 },
                 _ => Ok(Trampoline::Run(val, *k)),
             },
-            Continuation::ExecuteCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
+            Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
             Continuation::Return => Ok(Trampoline::Land(val)),
+        }
+    }
+}
+
+fn apply_function(f: Function, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match f {
+        Function::Native(native_func) => Ok(Trampoline::Run(primitive(native_func, args)?, *k)),
+        Function::Scheme(arg_names, body, env) => {
+            if arg_names.len() != args.len() {
+                runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
+            }
+
+            // Create a new, child environment for the procedure and define the arguments as local variables
+            let proc_env = Environment::new_child(env);
+            arg_names
+                .into_iter()
+                .zip(args)
+                .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
+
+            // Evaluate procedure body with new environment with procedure environment as parent
+            eval(body, Environment::new_child(proc_env), k)
         }
     }
 }
 
 fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Procedure(f) => {
-            match f {
-                Function::Scheme(arg_names, body, func_env) => {
-                    if arg_names.len() != args.len() {
-                        runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
-                    }
-
-                    // Create a new, child environment for the procedure and define the arguments as local variables
-                    let proc_env = Environment::new_child(func_env);
-                    for (name, value) in arg_names.into_iter().zip(args.into_iter()) {
-                        proc_env.borrow_mut().define(name, value)?;
-                    }
-
-                    // Evaluate procedure body with new environment with procedure environment as parent
-                    let inner_env = Environment::new_child(proc_env);
-                    evaluate_expressions(body, inner_env, k)
-                }
-                Function::Native(g) => {
-                    let res = primitive(g, args)?;
-                    Ok(Trampoline::Run(res, *k))
-                }
-            }
-        }
         Value::Continuation(k_prime) => Ok(Trampoline::Run(args.to_value(), *k_prime)),
-        _ => {
-            runtime_error!("Don't know how to apply: {:?}", val)
-        }
+        Value::Procedure(f) => apply_function(f, args, k),
+        _ => runtime_error!("Don't know how to apply: {:?}", val),
     }
 }
 
@@ -672,19 +673,19 @@ fn expand_macro(value: Value, substitutions: &HashMap<String, Value>) -> Value {
     }
 }
 
-fn evaluate_expressions(exprs: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match exprs.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvaluateExpressions(cdr, env, k))),
-        None => runtime_error!("Trying to evaluate an empty expression list"),
+fn eval(expr: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match expr.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
+        None => runtime_error!("trying to evaluate an empty expression list"),
     }
 }
 
 fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
-    if exprs.len() == 0 {
+    if exprs.is_empty() {
         return Ok(null!());
     }
 
-    let mut b = evaluate_expressions(exprs, env, Box::new(Continuation::Return))?;
+    let mut b = eval(exprs, env, Box::new(Continuation::Return))?;
     loop {
         match b {
             // Bounce is the usual execution path. It's used for pretty much everything.
@@ -782,7 +783,6 @@ impl Environment {
             ">",
             "=",
             "null?",
-            // numbers: number? complex? real? rational? integer?
             "integer?",
             "float?",
             "list",
@@ -816,24 +816,27 @@ impl Environment {
     // If key is already defined in the current env, return runtime error
     // (So if key is defined at a higher level, still define it at the current level)
     fn define(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
-        if self.values.contains_key(&key) {
+        let values = &self.values;
+        if values.contains_key(&key) {
             runtime_error!("Duplicate define: {:?}", key)
-        } else {
-            self.values.insert(key, value);
-            Ok(())
         }
+        self.values.insert(key, value);
+        Ok(())
     }
 
     // Set a variable to a value, at any level in the env, or throw a runtime error if it isn't defined at all
     fn set(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
-        if self.values.contains_key(&key) {
-            self.values.insert(key, value);
-            Ok(())
-        } else {
-            // Recurse up the environment tree until a value is found or the end is reached
-            match self.parent {
-                Some(ref parent) => parent.borrow_mut().set(key, value),
-                None => runtime_error!("Can't set! an undefined variable: {:?}", key),
+        match self.values.contains_key(&key) {
+            true => {
+                self.values.insert(key, value);
+                Ok(())
+            }
+            false => {
+                // Recurse up the environment tree until a value is found or the end is reached
+                match self.parent {
+                    Some(ref parent) => parent.borrow_mut().set(key, value),
+                    None => runtime_error!("Can't set! an undefined variable: {:?}", key),
+                }
             }
         }
     }
@@ -1028,10 +1031,10 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             Ok(null!())
         }
         "newline" => {
-            if args.len() != 0 {
+            if !args.is_empty() {
                 runtime_error!("Must supply exactly zero arguments to newline: {:?}", args);
             }
-            println!("");
+            println!();
             Ok(null!())
         }
         _ => {
