@@ -139,6 +139,8 @@ test!(addition1, "(+ 2 3)", "5");
 test!(addition2, "(+ 2 -3)", "-1");
 test!(addition3, "(+ 2 3 4 5)", "14");
 test!(addition4, "(+ (+ 2 -3) (+ 4 -5) (+ 6 -7) (+ 8 -9 10 -11 12 -13))", "-6");
+test!(addition_float, "(+ 0.1 2)", "2.1");
+test!(addition_float2, "(+ -0.1 0.2 0.3)", "0.4");
 
 test!(subtraction1, "(- 3 2)", "1");
 test!(subtraction2, "(- 2 -3)", "5");
@@ -304,7 +306,7 @@ test!(macros2, "(define-syntax-rule (incr x) (set! x (+ x 1))) (define x 1) (inc
 test!(
     macros3,
     r"
-    (define-syntax-rule (incr x) (set! x (+ x 1))) 
+    (define-syntax-rule (incr x) (set! x (+ x 1)))
     (define-syntax-rule (foo x y z) (if x (incr y) (incr z)))
     (define a #t)
     (define b 10)

@@ -503,8 +503,66 @@ fn test_lexer_quasiquoting() {
 
 #[test]
 fn test_lexer_complex_code_block() {
-    assert_eq!(tokenize("(define (list-of-squares n)\n  (let loop ((i n) (res (list)))\n    (if (< i 0)\n        res\n        (loop (- i 1) (cons (* i i) res)))))").unwrap(),
-               vec![Token::OpenParen, Token::Identifier("define".to_string()), Token::OpenParen, Token::Identifier("list-of-squares".to_string()), Token::Identifier("n".to_string()), Token::CloseParen, Token::OpenParen, Token::Identifier("let".to_string()), Token::Identifier("loop".to_string()), Token::OpenParen, Token::OpenParen, Token::Identifier("i".to_string()), Token::Identifier("n".to_string()), Token::CloseParen, Token::OpenParen, Token::Identifier("res".to_string()), Token::OpenParen, Token::Identifier("list".to_string()), Token::CloseParen, Token::CloseParen, Token::CloseParen, Token::OpenParen, Token::Identifier("if".to_string()), Token::OpenParen, Token::Identifier("<".to_string()), Token::Identifier("i".to_string()), Token::Integer(0), Token::CloseParen, Token::Identifier("res".to_string()), Token::OpenParen, Token::Identifier("loop".to_string()), Token::OpenParen, Token::Identifier("-".to_string()), Token::Identifier("i".to_string()), Token::Integer(1), Token::CloseParen, Token::OpenParen, Token::Identifier("cons".to_string()), Token::OpenParen, Token::Identifier("*".to_string()), Token::Identifier("i".to_string()), Token::Identifier("i".to_string()), Token::CloseParen, Token::Identifier("res".to_string()), Token::CloseParen, Token::CloseParen, Token::CloseParen, Token::CloseParen, Token::CloseParen]);
+    assert_eq!(
+        tokenize(
+            r"(define (list-of-squares n)
+                (let loop ((i n) (res (list)))
+                  (if (< i 0) res 
+                (loop (- i 1) (cons (* i i) res)))))"
+        )
+        .unwrap(),
+        vec![
+            Token::OpenParen,
+            Token::Identifier("define".to_string()),
+            Token::OpenParen,
+            Token::Identifier("list-of-squares".to_string()),
+            Token::Identifier("n".to_string()),
+            Token::CloseParen,
+            Token::OpenParen,
+            Token::Identifier("let".to_string()),
+            Token::Identifier("loop".to_string()),
+            Token::OpenParen,
+            Token::OpenParen,
+            Token::Identifier("i".to_string()),
+            Token::Identifier("n".to_string()),
+            Token::CloseParen,
+            Token::OpenParen,
+            Token::Identifier("res".to_string()),
+            Token::OpenParen,
+            Token::Identifier("list".to_string()),
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::OpenParen,
+            Token::Identifier("if".to_string()),
+            Token::OpenParen,
+            Token::Identifier("<".to_string()),
+            Token::Identifier("i".to_string()),
+            Token::Integer(0),
+            Token::CloseParen,
+            Token::Identifier("res".to_string()),
+            Token::OpenParen,
+            Token::Identifier("loop".to_string()),
+            Token::OpenParen,
+            Token::Identifier("-".to_string()),
+            Token::Identifier("i".to_string()),
+            Token::Integer(1),
+            Token::CloseParen,
+            Token::OpenParen,
+            Token::Identifier("cons".to_string()),
+            Token::OpenParen,
+            Token::Identifier("*".to_string()),
+            Token::Identifier("i".to_string()),
+            Token::Identifier("i".to_string()),
+            Token::CloseParen,
+            Token::Identifier("res".to_string()),
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::CloseParen
+        ]
+    );
 }
 
 #[test]

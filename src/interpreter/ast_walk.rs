@@ -27,6 +27,27 @@ impl Interpreter {
     }
 }
 
+pub struct RuntimeError {
+    message: String,
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RuntimeError: {}", self.message)
+    }
+}
+impl fmt::Debug for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RuntimeError: {}", self.message)
+    }
+}
+
+macro_rules! runtime_error {
+    ($($arg:tt)*) => (
+        return Err(RuntimeError { message: format!($($arg)*)})
+    )
+}
+
 #[derive(PartialEq, Clone)]
 pub enum Value {
     Symbol(String),
@@ -39,6 +60,73 @@ pub enum Value {
     Macro(Vec<String>, Vec<Value>),
 }
 
+impl std::ops::Add for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a + b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a + b as f64)),
+            (a, b) => runtime_error!("Cannot `+` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Sub for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a - b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a - b as f64)),
+            (a, b) => runtime_error!("Cannot `-` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Mul for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a * b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a * b as f64)),
+            (a, b) => runtime_error!("Cannot `*` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Div for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a / b)),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+            (Value::Integer(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
+            (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a / b as f64)),
+            (a, b) => runtime_error!("Cannot `/` {:?} and {:?}", a, b),
+        }
+    }
+}
+
+impl std::ops::Neg for Value {
+    type Output = Result<Value, RuntimeError>;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Value::Integer(a) => Ok(Value::Integer(-a)),
+            Value::Float(a) => Ok(Value::Float(-a)),
+            x => runtime_error!("Cannot `-` {:?}", x),
+        }
+    }
+}
 // null == empty list
 macro_rules! null {
     () => {
@@ -66,7 +154,7 @@ impl Value {
             Node::Float(val) => Value::Float(val),
             Node::Boolean(val) => Value::Boolean(val),
             Node::String(ref val) => Value::String(val.clone()),
-            Node::List(ref nodes) => Value::List(Value::from_nodes(&nodes)),
+            Node::List(ref nodes) => Value::List(Value::from_nodes(nodes)),
         }
     }
 }
@@ -117,35 +205,11 @@ impl Clone for Function {
     }
 }
 
-pub struct RuntimeError {
-    message: String,
-}
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RuntimeError: {}", self.message)
-    }
-}
-impl fmt::Debug for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RuntimeError: {}", self.message)
-    }
-}
-
-macro_rules! runtime_error {
-    ($($arg:tt)*) => (
-        return Err(RuntimeError { message: format!($($arg)*)})
-    )
-}
-
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
 }
 
-/**
- *
- */
 impl Environment {
     fn new_root() -> Rc<RefCell<Environment>> {
         let mut env = Environment {
@@ -263,23 +327,23 @@ fn evaluate_values(values: &[Value], env: Rc<RefCell<Environment>>) -> Result<Va
 
 fn evaluate_value(value: &Value, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     match value {
-        &Value::Symbol(ref v) => match env.borrow().get(v) {
+        Value::Symbol(ref v) => match env.borrow().get(v) {
             Some(val) => Ok(val),
             None => runtime_error!("Identifier not found: {:?}", value),
         },
-        &Value::Integer(v) => Ok(Value::Integer(v)),
-        &Value::Float(v) => Ok(Value::Float(v)),
-        &Value::Boolean(v) => Ok(Value::Boolean(v)),
-        &Value::String(ref v) => Ok(Value::String(v.clone())),
-        &Value::List(ref vec) => {
-            if vec.len() > 0 {
+        Value::Integer(v) => Ok(Value::Integer(*v)),
+        Value::Float(v) => Ok(Value::Float(*v)),
+        Value::Boolean(v) => Ok(Value::Boolean(*v)),
+        Value::String(ref v) => Ok(Value::String(v.clone())),
+        Value::List(ref vec) => {
+            if !vec.is_empty() {
                 evaluate_expression(vec, env.clone())
             } else {
                 Ok(null!())
             }
         }
-        &Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
-        &Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
+        Value::Procedure(ref v) => Ok(Value::Procedure(v.clone())),
+        Value::Macro(ref a, ref b) => Ok(Value::Macro(a.clone(), b.clone())),
     }
 }
 
@@ -534,15 +598,8 @@ fn native_plus(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, R
     if args.len() < 2 {
         runtime_error!("Must supply at least two arguments to +: {:?}", args);
     }
-    let mut sum = 0;
-    for n in args.iter() {
-        let v = evaluate_value(n, env.clone())?;
-        match v {
-            Value::Integer(x) => sum += x,
-            _ => runtime_error!("Unexpected value during +: {:?}", n),
-        };
-    }
-    Ok(Value::Integer(sum))
+    args.iter()
+        .try_fold(Value::Integer(0), |acc, arg| acc + evaluate_value(arg, env.clone())?)
 }
 
 fn native_minus(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
