@@ -393,9 +393,9 @@ pub enum Continuation {
     EvalFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
-    ExecEval(Rc<RefCell<Environment>>, Box<Continuation>),
+    Eval(Rc<RefCell<Environment>>, Box<Continuation>),
     EvalApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
-    ExecApply(Value, Box<Continuation>),
+    Apply(Value, Box<Continuation>),
     EvalAnd(List, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalOr(List, Rc<RefCell<Environment>>, Box<Continuation>),
     ExecCallCC(Box<Continuation>),
@@ -409,221 +409,257 @@ pub enum Trampoline {
     Land(Value),
 }
 
-impl Continuation {
-    fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
-        match self {
-            Continuation::EvalExpr(rest, env, k) => {
-                if !rest.is_empty() {
-                    eval(rest, env, k)
-                } else {
-                    Ok(Trampoline::Run(val, *k))
+fn cont_begin_func(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::SpecialForm(f) => {
+            match f {
+                SpecialForm::If => {
+                    let (condition, if_expr, else_expr) = rest.unpack3()?;
+                    Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
                 }
-            }
-            Continuation::BeginFunc(rest, env, k) => {
-                match val {
-                    Value::SpecialForm(f) => {
-                        match f {
-                            SpecialForm::If => {
-                                let (condition, if_expr, else_expr) = rest.unpack3()?;
-                                Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
-                            }
-                            SpecialForm::Define => {
-                                let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
-                                match car {
-                                    Value::Symbol(name) => {
-                                        let val = cdr.unpack1()?;
-                                        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))
-                                    }
-                                    Value::List(list) => {
-                                        let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
-                                        let name = caar.as_symbol()?;
-
-                                        let arg_names = cdar.into_iter().map(|v| v.as_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
-                                        let body = cdr;
-                                        let f = Function::Scheme(arg_names, body, env.clone());
-
-                                        env.borrow_mut().define(name, Value::Procedure(f))?;
-                                        Ok(Trampoline::Run(null!(), *k))
-                                    }
-                                    _ => runtime_error!("Bad argument to define: {:?}", car),
-                                }
-                            }
-                            SpecialForm::Set => {
-                                let (name_raw, val) = rest.unpack2()?;
-                                let name = name_raw.as_symbol()?;
-                                Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name, env, k)))
-                            }
-                            SpecialForm::Lambda => {
-                                let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
-                                let arg_defns = arg_defns_raw.as_list()?;
-
-                                let arg_names = arg_defns
-                                    .into_iter()
-                                    .map(|v| v.as_symbol())
-                                    .collect::<Result<Vec<String>, RuntimeError>>()?;
-
-                                let f = Function::Scheme(arg_names, body, env);
-                                Ok(Trampoline::Run(Value::Procedure(f), *k))
-                            }
-                            SpecialForm::Let => {
-                                let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
-                                let arg_defns = arg_defns_raw.as_list()?;
-
-                                // Create a new, child environment for the procedure and define the arguments as local variables
-                                let proc_env = Environment::new_child(env.clone());
-
-                                // Iterate through the provided arguments, defining them
-                                if !arg_defns.is_empty() {
-                                    let (first_defn, rest_defns) = shift_or_error!(arg_defns, "Error in let definiton");
-                                    let (defn_key, defn_val) = first_defn.as_list()?.unpack2()?;
-                                    let name = defn_key.as_symbol()?;
-                                    Ok(Trampoline::Bounce(defn_val, env, Continuation::EvalLet(name, rest_defns, body, proc_env, k)))
-                                } else {
-                                    // Let bindings were empty, just execute the body directly
-                                    eval(body, env, k)
-                                }
-                            }
-                            SpecialForm::Quote => {
-                                let expr = rest.unpack1()?;
-                                Ok(Trampoline::Run(expr, *k))
-                            }
-                            SpecialForm::Quasiquote => {
-                                let expr = rest.unpack1()?;
-                                match expr {
-                                    Value::List(list) => match list.shift() {
-                                        Some((car, cdr)) => {
-                                            Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k)))
-                                        }
-                                        None => Ok(Trampoline::Run(null!(), *k)),
-                                    },
-                                    _ => Ok(Trampoline::Run(expr, *k)),
-                                }
-                            }
-                            SpecialForm::Eval => {
-                                let expr = rest.unpack1()?;
-                                Ok(Trampoline::Bounce(expr, env.clone(), Continuation::ExecEval(env, k)))
-                            }
-                            SpecialForm::Apply => {
-                                let (func, args) = rest.unpack2()?;
-                                Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
-                            }
-                            SpecialForm::Begin => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
-                                None => runtime_error!("Must provide at least one argument to a begin statement"),
-                            },
-                            SpecialForm::And => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
-                                None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
-                            },
-                            SpecialForm::Or => match rest.shift() {
-                                Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
-                                None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
-                            },
-                            SpecialForm::CallCC => {
-                                let f = rest.unpack1()?;
-                                Ok(Trampoline::Bounce(f, env, Continuation::ExecCallCC(k)))
-                            }
-                            SpecialForm::DefineSyntaxRule => {
-                                let (defn, body) = rest.unpack2()?;
-
-                                let (name, arg_names_raw) = match defn.as_list()?.shift() {
-                                    Some((car, cdr)) => (car.as_symbol()?, cdr),
-                                    None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
-                                };
-
-                                let arg_names = arg_names_raw
-                                    .into_iter()
-                                    .map(|v| v.as_symbol())
-                                    .collect::<Result<Vec<String>, RuntimeError>>()?;
-
-                                let m = Value::Macro(arg_names, Box::new(body));
-                                let _ = env.borrow_mut().define(name, m);
-                                Ok(Trampoline::Run(null!(), *k))
-                            }
+                SpecialForm::Define => {
+                    let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
+                    match car {
+                        Value::Symbol(name) => {
+                            let val = cdr.unpack1()?;
+                            Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))
                         }
+                        Value::List(list) => {
+                            let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
+                            let name = caar.as_symbol()?;
+
+                            let arg_names = cdar.into_iter().map(|v| v.as_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
+                            let body = cdr;
+                            let f = Function::Scheme(arg_names, body, env.clone());
+
+                            env.borrow_mut().define(name, Value::Procedure(f))?;
+                            Ok(Trampoline::Run(null!(), *k))
+                        }
+                        _ => runtime_error!("Bad argument to define: {:?}", car),
                     }
-                    Value::Macro(arg_names, body) => {
-                        let args = rest;
-                        if arg_names.len() != args.len() {
-                            runtime_error!("Must supply exactly {} arguments to macro: {:?}", arg_names.len(), args);
-                        }
-
-                        // Create a lookup table for symbol substitutions
-                        let mut substitutions = HashMap::new();
-                        for (name, value) in arg_names.into_iter().zip(args.into_iter()) {
-                            substitutions.insert(name, value);
-                        }
-
-                        // Expand the macro
-                        let expanded = expand_macro(*body, &substitutions);
-
-                        // Finished expanding macro, now evaluate the code manually
-                        Ok(Trampoline::Bounce(expanded, env, *k))
-                    }
-                    _ => match rest.shift() {
-                        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(val, cdr, List::Null, env, k))),
-                        None => apply(val, List::Null, k),
-                    },
                 }
-            }
-            Continuation::EvalFunc(f, rest, acc, env, k) => {
-                let acc2 = acc.unshift(val);
-                match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(f, cdr, acc2, env, k))),
-                    None => apply(f, acc2.reverse(), k),
+                SpecialForm::Set => {
+                    let (name_raw, val) = rest.unpack2()?;
+                    let name = name_raw.as_symbol()?;
+                    Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name, env, k)))
                 }
-            }
-            Continuation::EvalIf(if_expr, else_expr, env, k) => match val {
-                Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, *k)),
-                _ => Ok(Trampoline::Bounce(if_expr, env, *k)),
-            },
-            Continuation::EvalDef(name, env, k) => {
-                env.borrow_mut().define(name, val)?;
-                Ok(Trampoline::Run(null!(), *k))
-            }
-            Continuation::EvalSet(name, env, k) => {
-                env.borrow_mut().set(name, val)?;
-                Ok(Trampoline::Run(null!(), *k))
-            }
-            Continuation::EvalLet(name, rest, body, env, k) => {
-                // Define variable in let scope
-                env.borrow_mut().define(name, val)?;
-                match rest.shift() {
-                    Some((next_defn, rest_defns)) => {
-                        let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
+                SpecialForm::Lambda => {
+                    let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
+                    let arg_defns = arg_defns_raw.as_list()?;
+
+                    let arg_names = arg_defns
+                        .into_iter()
+                        .map(|v| v.as_symbol())
+                        .collect::<Result<Vec<String>, RuntimeError>>()?;
+
+                    let f = Function::Scheme(arg_names, body, env);
+                    Ok(Trampoline::Run(Value::Procedure(f), *k))
+                }
+                SpecialForm::Let => {
+                    let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
+                    let arg_defns = arg_defns_raw.as_list()?;
+
+                    // Create a new, child environment for the procedure and define the arguments as local variables
+                    let proc_env = Environment::new_child(env.clone());
+
+                    // Iterate through the provided arguments, defining them
+                    if !arg_defns.is_empty() {
+                        let (first_defn, rest_defns) = shift_or_error!(arg_defns, "Error in let definiton");
+                        let (defn_key, defn_val) = first_defn.as_list()?.unpack2()?;
                         let name = defn_key.as_symbol()?;
-                        Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
-                    }
-                    None => {
-                        let inner_env = Environment::new_child(env);
-                        eval(body, inner_env, k)
+                        Ok(Trampoline::Bounce(defn_val, env, Continuation::EvalLet(name, rest_defns, body, proc_env, k)))
+                    } else {
+                        // Let bindings were empty, just execute the body directly
+                        eval(body, env, k)
                     }
                 }
-            }
-            Continuation::ContinueQuasiquoting(rest, acc, env, k) => {
-                let acc2 = acc.unshift(val);
-                match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
-                    None => Ok(Trampoline::Run(acc2.reverse().to_value(), *k)),
+                SpecialForm::Quote => {
+                    let expr = rest.unpack1()?;
+                    Ok(Trampoline::Run(expr, *k))
                 }
-            }
-            Continuation::ExecEval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
-            Continuation::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::ExecApply(val, k))),
-            Continuation::ExecApply(f, k) => apply(f, val.as_list()?, k),
-            Continuation::EvalAnd(rest, env, k) => match val {
-                Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
-                _ => match rest.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
-                    None => Ok(Trampoline::Run(val, *k)),
+                SpecialForm::Quasiquote => {
+                    let expr = rest.unpack1()?;
+                    match expr {
+                        Value::List(list) => match list.shift() {
+                            Some((car, cdr)) => {
+                                Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k)))
+                            }
+                            None => Ok(Trampoline::Run(null!(), *k)),
+                        },
+                        _ => Ok(Trampoline::Run(expr, *k)),
+                    }
+                }
+                SpecialForm::Eval => {
+                    let expr = rest.unpack1()?;
+                    Ok(Trampoline::Bounce(expr, env.clone(), Continuation::Eval(env, k)))
+                }
+                SpecialForm::Apply => {
+                    let (func, args) = rest.unpack2()?;
+                    Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
+                }
+                SpecialForm::Begin => match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
+                    None => runtime_error!("Must provide at least one argument to a begin statement"),
                 },
-            },
-            Continuation::EvalOr(rest, env, k) => match val {
-                Value::Boolean(false) => match rest.shift() {
+                SpecialForm::And => match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
+                    None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
+                },
+                SpecialForm::Or => match rest.shift() {
                     Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
                     None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
                 },
-                _ => Ok(Trampoline::Run(val, *k)),
-            },
+                SpecialForm::CallCC => {
+                    let f = rest.unpack1()?;
+                    Ok(Trampoline::Bounce(f, env, Continuation::ExecCallCC(k)))
+                }
+                SpecialForm::DefineSyntaxRule => {
+                    let (defn, body) = rest.unpack2()?;
+
+                    let (name, arg_names_raw) = match defn.as_list()?.shift() {
+                        Some((car, cdr)) => (car.as_symbol()?, cdr),
+                        None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
+                    };
+
+                    let arg_names = arg_names_raw
+                        .into_iter()
+                        .map(|v| v.as_symbol())
+                        .collect::<Result<Vec<String>, RuntimeError>>()?;
+
+                    let m = Value::Macro(arg_names, Box::new(body));
+                    let _ = env.borrow_mut().define(name, m);
+                    Ok(Trampoline::Run(null!(), *k))
+                }
+            }
+        }
+        Value::Macro(arg_names, body) => {
+            let args = rest;
+            if arg_names.len() != args.len() {
+                runtime_error!("Must supply exactly {} arguments to macro: {:?}", arg_names.len(), args);
+            }
+
+            // Create a lookup table for symbol substitutions
+            let mut substitutions = HashMap::new();
+            for (name, value) in arg_names.into_iter().zip(args.into_iter()) {
+                substitutions.insert(name, value);
+            }
+
+            // Expand the macro
+            let expanded = expand_macro(*body, &substitutions);
+
+            // Finished expanding macro, now evaluate the code manually
+            Ok(Trampoline::Bounce(expanded, env, *k))
+        }
+        _ => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(val, cdr, List::Null, env, k))),
+            None => apply(val, List::Null, k),
+        },
+    }
+}
+
+fn cont_eval_expr(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    if !rest.is_empty() {
+        eval(rest, env, k)
+    } else {
+        Ok(Trampoline::Run(val, *k))
+    }
+}
+
+fn cont_eval_func(
+    f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    let acc2 = acc.unshift(val);
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(f, cdr, acc2, env, k))),
+        None => apply(f, acc2.reverse(), k),
+    }
+}
+
+fn cont_eval_if(
+    if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, *k)),
+        _ => Ok(Trampoline::Bounce(if_expr, env, *k)),
+    }
+}
+
+fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    env.borrow_mut().define(name, val)?;
+    Ok(Trampoline::Run(null!(), *k))
+}
+
+fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    env.borrow_mut().set(name, val)?;
+    Ok(Trampoline::Run(null!(), *k))
+}
+
+fn cont_eval_let(
+    name: String, val: Value, rest: List, body: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    // Define variable in let scope
+    env.borrow_mut().define(name, val)?;
+    match rest.shift() {
+        Some((next_defn, rest_defns)) => {
+            let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
+            let name = defn_key.as_symbol()?;
+            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
+        }
+        None => {
+            let inner_env = Environment::new_child(env);
+            eval(body, inner_env, k)
+        }
+    }
+}
+
+fn cont_continue_quasiquoting(
+    val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    let acc2 = acc.unshift(val);
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
+        None => Ok(Trampoline::Run(acc2.reverse().to_value(), *k)),
+    }
+}
+
+fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        _ => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
+            None => Ok(Trampoline::Run(val, *k)),
+        },
+    }
+}
+
+fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
+            None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        },
+        _ => Ok(Trampoline::Run(val, *k)),
+    }
+}
+impl Continuation {
+    fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
+        match self {
+            Continuation::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
+            Continuation::BeginFunc(rest, env, k) => cont_begin_func(val, rest, env, k),
+            Continuation::EvalFunc(f, rest, acc, env, k) => cont_eval_func(f, val, rest, acc, env, k),
+            Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(if_expr, else_expr, val, env, k),
+            Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, k),
+            Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, k),
+            Continuation::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
+            Continuation::ContinueQuasiquoting(rest, acc, env, k) => cont_continue_quasiquoting(val, rest, acc, env, k),
+
+            Continuation::Eval(env, k) => Ok(Trampoline::Bounce(val, Environment::get_root(env), *k)),
+            Continuation::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Continuation::Apply(val, k))),
+
+            Continuation::Apply(f, k) => apply(f, val.as_list()?, k),
+
+            Continuation::EvalAnd(rest, env, k) => cont_eval_and(val, rest, env, k),
+            Continuation::EvalOr(rest, env, k) => cont_eval_or(val, rest, env, k),
             Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
             Continuation::Return => Ok(Trampoline::Land(val)),
         }
@@ -653,8 +689,8 @@ fn apply_function(f: Function, args: List, k: Box<Continuation>) -> Result<Tramp
 
 fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Continuation(k_prime) => Ok(Trampoline::Run(args.to_value(), *k_prime)),
-        Value::Procedure(f) => apply_function(f, args, k),
+        Value::Continuation(c) => Ok(Trampoline::Run(args.to_value(), *c)),
+        Value::Procedure(func) => apply_function(func, args, k),
         _ => runtime_error!("Don't know how to apply: {:?}", val),
     }
 }
