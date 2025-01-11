@@ -55,7 +55,7 @@
             nativeBuildInputs = with pkgs;
               [ pkg-config openssl python3 bzip2 ]
               ++ lib.optionals pkgs.stdenv.isLinux [ clang mold ];
-            buildInputs = with pkgs; [ readline ];
+            # buildInputs = with pkgs; [ readline ];
           };
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -69,11 +69,11 @@
               pkgs.cargo-dist
               pkgs.redis
               pkgs.iredis
-              pkgs.readline
+              # pkgs.readline
             ];
             shellHook = ''
               export RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold"
-              export LD_LIBRARY_PATH="${pkgs.readline}/lib:$LD_LIBRARY_PATH"
+              # export LD_LIBRARY_PATH="${pkgs.readline}/lib:$LD_LIBRARY_PATH"
             '';
           };
 
@@ -81,7 +81,7 @@
             default = craneLib.buildPackage (commonArgs // {
               pname = "ch";
               inherit cargoArtifacts;
-              buildInputs = with pkgs; [ readline ];
+              # buildInputs = with pkgs; [ readline ];
             });
 
             # docs = pkgs.callPackage ./docs {};
