@@ -931,10 +931,10 @@ fn native_print(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, 
 
 #[allow(unused_variables)]
 fn native_newline(args: &[Value], env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
-    if args.len() != 0 {
+    if !args.is_empty() {
         runtime_error!("Must supply exactly zero arguments to newline: {:?}", args);
     }
-    println!("");
+    println!();
     Ok(null!())
 }
 

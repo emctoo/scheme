@@ -281,6 +281,8 @@ impl List {
         self == &List::Null
     }
 
+    /// Null => None
+    /// List => Some((car cdr)
     fn shift(self) -> Option<(Value, List)> {
         match self {
             List::Cell(car, cdr) => Some((*car, *cdr)),
@@ -288,10 +290,12 @@ impl List {
         }
     }
 
+    /// car => (car self)
     fn unshift(self, car: Value) -> List {
         List::Cell(Box::new(car), Box::new(self))
     }
 
+    /// list length
     fn len(&self) -> usize {
         match self {
             List::Cell(_, ref cdr) => 1 + cdr.len(),
@@ -299,6 +303,7 @@ impl List {
         }
     }
 
+    /// (car cdr) -> car
     fn unpack1(self) -> Result<Value, RuntimeError> {
         let (car, cdr) = shift_or_error!(self, "Expected list of length 1, but was empty");
         if !cdr.is_empty() {
@@ -307,6 +312,7 @@ impl List {
         Ok(car)
     }
 
+    /// (car (cadr '())) -> (car cadr)
     fn unpack2(self) -> Result<(Value, Value), RuntimeError> {
         let (car, cdr) = shift_or_error!(self, "Expected list of length 2, but was empty");
         let (cadr, cddr) = shift_or_error!(cdr, "Expected list of length 2, but was length 1");
@@ -316,6 +322,7 @@ impl List {
         Ok((car, cadr))
     }
 
+    /// (car (cadr (caddr '()))) -> (car cadr caddr)
     fn unpack3(self) -> Result<(Value, Value, Value), RuntimeError> {
         let (car, cdr) = shift_or_error!(self, "Expected list of length 3, but was empty");
         let (cadr, cddr) = shift_or_error!(cdr, "Expected list of length 3, but was length 1");
@@ -328,8 +335,8 @@ impl List {
 
     fn reverse(self) -> List {
         let mut out = List::Null;
-        for v in self {
-            out = out.unshift(v)
+        for val in self {
+            out = out.unshift(val)
         }
         out
     }
@@ -408,7 +415,7 @@ pub enum Trampoline {
     Land(Value),
 }
 
-fn cont_begin_func(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+fn cont_begin_fn(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::SpecialForm(f) => {
             match f {
@@ -564,7 +571,7 @@ fn cont_eval_expr(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<
     }
 }
 
-fn cont_eval_func(
+fn cont_eval_fn(
     f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
 ) -> Result<Trampoline, RuntimeError> {
     let acc2 = acc.unshift(val);
@@ -574,23 +581,21 @@ fn cont_eval_func(
     }
 }
 
-fn cont_eval_if(
-    if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
-) -> Result<Trampoline, RuntimeError> {
+fn cont_eval_if(if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, *k)),
-        _ => Ok(Trampoline::Bounce(if_expr, env, *k)),
+        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
+        _ => Ok(Trampoline::Bounce(if_expr, env, k)),
     }
 }
 
-fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     env.borrow_mut().define(name, val)?;
-    Ok(Trampoline::Run(null!(), *k))
+    Ok(Trampoline::Run(null!(), k))
 }
 
-fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     env.borrow_mut().set(name, val)?;
-    Ok(Trampoline::Run(null!(), *k))
+    Ok(Trampoline::Run(null!(), k))
 }
 
 fn cont_eval_let(
@@ -644,11 +649,11 @@ impl Continuation {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
             Continuation::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
-            Continuation::BeginFunc(rest, env, k) => cont_begin_func(val, rest, env, k),
-            Continuation::EvalFunc(f, rest, acc, env, k) => cont_eval_func(f, val, rest, acc, env, k),
-            Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(if_expr, else_expr, val, env, k),
-            Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, k),
-            Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, k),
+            Continuation::BeginFunc(rest, env, k) => cont_begin_fn(val, rest, env, k),
+            Continuation::EvalFunc(f, rest, acc, env, k) => cont_eval_fn(f, val, rest, acc, env, k),
+            Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(if_expr, else_expr, val, env, *k),
+            Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, *k),
+            Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, *k),
             Continuation::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
             Continuation::ContinueQuasiquoting(rest, acc, env, k) => cont_continue_quasiquoting(val, rest, acc, env, k),
 
