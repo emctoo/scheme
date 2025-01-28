@@ -504,47 +504,64 @@ fn cont_special_macro(
     Ok(Trampoline::Bounce(expanded, env, k)) // Finished expanding macro, now evaluate the code manually
 }
 
+fn cont_special_if(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    let (condition, if_expr, else_expr) = rest.unpack3()?;
+    Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
+}
+
+fn cont_special_set(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    let (name, val) = rest.unpack2()?;
+    Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.as_symbol()?, env, k)))
+}
+
+fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    let expr = rest.unpack1()?;
+    match expr {
+        Value::List(list) => match list.shift() {
+            Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k))),
+            None => Ok(Trampoline::Run(null!(), *k)),
+        },
+        _ => Ok(Trampoline::Run(expr, *k)),
+    }
+}
+
+fn cont_special_apply(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    let (f, args) = rest.unpack2()?;
+    Ok(Trampoline::Bounce(f, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
+}
+fn cont_special_begin(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
+        None => runtime_error!("Must provide at least one argument to a begin statement"),
+    }
+}
+fn cont_special_and(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
+        None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
+    }
+}
+fn cont_special_or(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
+        None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+    }
+}
+
 fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError>  {
     match f {
-        SpecialForm::If => {
-            let (condition, if_expr, else_expr) = rest.unpack3()?;
-            Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
-        }
+        SpecialForm::If => cont_special_if(rest, env, k),
         SpecialForm::Define => cont_special_def(rest, env, k),
-        SpecialForm::Set => {
-            let (name, val) = rest.unpack2()?;
-            Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.as_symbol()?, env, k)))
-        }
+        SpecialForm::Set => cont_special_set(rest, env, k),
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
         SpecialForm::Quote => Ok(Trampoline::Run(rest.unpack1()?, *k)),
-        SpecialForm::Quasiquote => {
-            let expr = rest.unpack1()?;
-            match expr {
-                Value::List(list) => match list.shift() {
-                    Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k))),
-                    None => Ok(Trampoline::Run(null!(), *k)),
-                },
-                _ => Ok(Trampoline::Run(expr, *k)),
-            }
-        }
+        SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.unpack1()?, env.clone(), Continuation::Eval(env, k))),
-        SpecialForm::Apply => {
-            let (func, args) = rest.unpack2()?;
-            Ok(Trampoline::Bounce(func, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
-        }
-        SpecialForm::Begin => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
-            None => runtime_error!("Must provide at least one argument to a begin statement"),
-        },
-        SpecialForm::And => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
-            None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
-        },
-        SpecialForm::Or => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
-            None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
-        },
+        SpecialForm::Apply => cont_special_apply(rest, env, k),
+        SpecialForm::Begin => cont_special_begin(rest, env, k),
+        SpecialForm::And => cont_special_and(rest, env, k),
+        SpecialForm::Or => cont_special_or(rest, env, k),
         SpecialForm::CallCC => Ok(Trampoline::Bounce(rest.unpack1()?, env, Continuation::ExecCallCC(k))),
         SpecialForm::DefineSyntaxRule => cont_special_define_syntax_rule(rest, env, *k),
     }
