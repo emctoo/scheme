@@ -8,29 +8,27 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     crane.url = "github:ipetkov/crane";
-
+    rust-overlay.url = "github:oxalica/rust-overlay";
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
     };
-
     flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
-  outputs = inputs@{ self, fenix, crane, flake-parts, advisory-db, ... }:
+  outputs = inputs@{ self, nixpkgs, crane, rust-overlay, flake-parts
+    , advisory-db, ... }:
     flake-parts.lib.mkFlake { inherit self inputs; } ({ withSystem, ... }: {
       systems = [ "x86_64-linux" "aarch64-linux" ];
 
       perSystem = { lib, config, self', inputs', pkgs, system, ... }:
         let
-          rustToolchain = fenix.packages.${system}.stable.toolchain;
+          overlays = [
+            (import rust-overlay)
+          ];
+          pkgs = import nixpkgs { inherit system overlays; };
+          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
           # include .md and .json files for the build

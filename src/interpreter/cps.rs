@@ -6,9 +6,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::vec;
 
-pub fn new() -> Result<Interpreter, RuntimeError> {
-    Interpreter::new()
-}
+pub fn new() -> Result<Interpreter, RuntimeError> { Interpreter::new() }
 
 #[derive(Clone)]
 pub struct Interpreter {
@@ -21,9 +19,7 @@ impl Interpreter {
         Ok(Interpreter { root: env })
     }
 
-    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> {
-        process(List::from_nodes(nodes), self.root.clone())
-    }
+    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> { process(List::from_nodes(nodes), self.root.clone()) }
 }
 
 macro_rules! runtime_error {
@@ -124,9 +120,7 @@ impl std::ops::Neg for Value {
 }
 
 impl Value {
-    fn from_vec(vec: Vec<Value>) -> Value {
-        List::from_vec(vec).into_list()
-    }
+    fn from_vec(vec: Vec<Value>) -> Value { List::from_vec(vec).into_list() }
 
     fn from_node(node: &Node) -> Value {
         match *node {
@@ -139,14 +133,14 @@ impl Value {
         }
     }
 
-    fn as_symbol(self) -> Result<String, RuntimeError> {
+    fn into_symbol(self) -> Result<String, RuntimeError> {
         match self {
             Value::Symbol(s) => Ok(s),
             _ => runtime_error!("Expected a symbol value: {:?}", self),
         }
     }
 
-    fn as_integer(self) -> Result<i64, RuntimeError> {
+    fn into_integer(self) -> Result<i64, RuntimeError> {
         match self {
             Value::Integer(i) => Ok(i),
             _ => runtime_error!("Expected an integer value: {:?}", self),
@@ -167,7 +161,7 @@ impl Value {
     //     }
     // }
 
-    fn as_list(self) -> Result<List, RuntimeError> {
+    fn into_list(self) -> Result<List, RuntimeError> {
         match self {
             Value::List(l) => Ok(l),
             _ => runtime_error!("Expected a list value: {:?}", self),
@@ -241,9 +235,7 @@ pub struct RuntimeError {
 }
 
 impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RuntimeError: {}", self.message)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "RuntimeError: {}", self.message) }
 }
 
 #[derive(PartialEq, Clone)]
@@ -259,16 +251,59 @@ macro_rules! null {
     };
 }
 
+macro_rules! match_list {
+    // 匹配空列表
+    ($list:expr, [] => $empty_expr:expr) => {
+        match $list {
+            List::Null => $empty_expr,
+            _ => runtime_error!("Expected empty list"),
+        }
+    };
+
+    // 匹配单个元素
+    ($list:expr, [$x:pat] => $expr:expr) => {
+        match $list {
+            List::Cell(box $x, box List::Null) => $expr,
+            _ => runtime_error!("Expected list of length 1"),
+        }
+    };
+
+    // 匹配两个元素
+    ($list:expr, [$x:pat, $y:pat] => $expr:expr) => {
+        match $list {
+            List::Cell(box $x, box List::Cell(box $y, box List::Null)) => $expr,
+            _ => runtime_error!("Expected list of length 2"),
+        }
+    };
+
+    // 匹配三个元素
+    ($list:expr, [$x:pat, $y:pat, $z:pat] => $expr:expr) => {
+        match $list {
+            List::Cell(box $x, box List::Cell(box $y, box List::Cell(box $z, box List::Null))) => $expr,
+            _ => runtime_error!("Expected list of length 3"),
+        }
+    };
+
+    // 匹配 head 和 tail
+    ($list:expr, head: $x:pat, tail: $xs:pat => $expr:expr) => {
+        match $list {
+            List::Cell(box $x, box $xs) => $expr,
+            _ => runtime_error!("Expected non-empty list"),
+        }
+    };
+}
+
 impl List {
     fn from_vec(mut vec: Vec<Value>) -> List {
-        if !vec.is_empty() {
-            let mut out = List::Null;
-            while let Some(v) = vec.pop() {
-                out = List::Cell(Box::new(v), Box::new(out));
+        match vec.is_empty() {
+            true => List::Null,
+            false => {
+                let mut out = List::Null;
+                while let Some(v) = vec.pop() {
+                    out = List::Cell(Box::new(v), Box::new(out));
+                }
+                out
             }
-            out
-        } else {
-            List::Null
         }
     }
 
@@ -277,9 +312,7 @@ impl List {
         List::from_vec(vec)
     }
 
-    fn is_empty(&self) -> bool {
-        self == &List::Null
-    }
+    fn is_empty(&self) -> bool { self == &List::Null }
 
     /// Null => None
     /// List => Some((car cdr)
@@ -291,9 +324,7 @@ impl List {
     }
 
     /// car => (car self)
-    fn unshift(self, car: Value) -> List {
-        List::Cell(Box::new(car), Box::new(self))
-    }
+    fn unshift(self, car: Value) -> List { List::Cell(Box::new(car), Box::new(self)) }
 
     /// list length
     fn len(&self) -> usize {
@@ -322,17 +353,6 @@ impl List {
         Ok((car, cadr))
     }
 
-    /// (car (cadr (caddr '()))) -> (car cadr caddr)
-    fn unpack3(self) -> Result<(Value, Value, Value), RuntimeError> {
-        let (car, cdr) = shift_or_error!(self, "Expected list of length 3, but was empty");
-        let (cadr, cddr) = shift_or_error!(cdr, "Expected list of length 3, but was length 1");
-        let (caddr, cdddr) = shift_or_error!(cddr, "Expected list of length 3, but was length 2");
-        if !cdddr.is_empty() {
-            runtime_error!("Expected list of length 3, but it had more elements")
-        }
-        Ok((car, cadr, caddr))
-    }
-
     fn reverse(self) -> List {
         let mut out = List::Null;
         for val in self {
@@ -341,17 +361,11 @@ impl List {
         out
     }
 
-    fn into_list(self) -> Value {
-        Value::List(self)
-    }
+    fn into_list(self) -> Value { Value::List(self) }
 
-    fn into_vec(self) -> Vec<Value> {
-        self.into_iter().collect()
-    }
+    fn into_vec(self) -> Vec<Value> { self.into_iter().collect() }
 
-    fn into_iter(self) -> ListIterator {
-        ListIterator(self)
-    }
+    fn into_iter(self) -> ListIterator { ListIterator(self) }
 }
 
 struct ListIterator(List);
@@ -370,9 +384,7 @@ impl IntoIterator for List {
     type Item = Value;
     type IntoIter = vec::IntoIter<Value>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.into_vec().into_iter()
-    }
+    fn into_iter(self) -> Self::IntoIter { self.into_vec().into_iter() }
 }
 
 impl fmt::Display for List {
@@ -398,12 +410,16 @@ pub enum Continuation {
     EvalSet(String, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+
     ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+
     Eval(Rc<RefCell<Environment>>, Box<Continuation>),
     EvalApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
     Apply(Value, Box<Continuation>),
+
     EvalAnd(List, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalOr(List, Rc<RefCell<Environment>>, Box<Continuation>),
+
     ExecCallCC(Box<Continuation>),
     Return,
 }
@@ -416,21 +432,19 @@ pub enum Trampoline {
 }
 
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
-    let (defn, body) = rest.unpack2()?;
+    match_list!(rest, [defn, body] => {
+        let (name, arg_names_raw) = match defn.into_list()?.shift() {
+            Some((car, cdr)) => (car.into_symbol()?, cdr),
+            None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
+        };
+        let arg_names = arg_names_raw
+            .into_iter()
+            .map(|v| v.into_symbol())
+            .collect::<Result<Vec<String>, RuntimeError>>()?;
 
-    let (name, arg_names_raw) = match defn.as_list()?.shift() {
-        Some((car, cdr)) => (car.as_symbol()?, cdr),
-        None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
-    };
-
-    let arg_names = arg_names_raw
-        .into_iter()
-        .map(|v| v.as_symbol())
-        .collect::<Result<Vec<String>, RuntimeError>>()?;
-
-    let m = Value::Macro(arg_names, Box::new(body));
-    let _ = env.borrow_mut().define(name, m);
-    Ok(Trampoline::Run(null!(), k))
+        let _ = env.borrow_mut().define(name, Value::Macro(arg_names, Box::new(body)));
+        Ok(Trampoline::Run(null!(), k))
+    })
 }
 
 fn cont_special_macro(
@@ -454,15 +468,12 @@ fn cont_special_macro(
 fn cont_special_def(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
     match car {
-        Value::Symbol(name) => {
-            let val = cdr.unpack1()?;
-            Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))
-        }
+        Value::Symbol(name) => match_list!(cdr, [val] => Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))),
         Value::List(list) => {
             let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
-            let name = caar.as_symbol()?;
+            let name = caar.into_symbol()?;
 
-            let arg_names = cdar.into_iter().map(|v| v.as_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
+            let arg_names = cdar.into_iter().map(|v| v.into_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
             let body = cdr;
             let f = Function::Scheme(arg_names, body, env.clone());
 
@@ -480,11 +491,11 @@ fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Con
 
 fn cont_special_lambda(rest: List, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
-    let arg_defns = arg_defns_raw.as_list()?;
+    let arg_defns = arg_defns_raw.into_list()?;
 
     let arg_names = arg_defns
         .into_iter()
-        .map(|v| v.as_symbol())
+        .map(|v| v.into_symbol())
         .collect::<Result<Vec<String>, RuntimeError>>()?;
 
     let f = Function::Scheme(arg_names, body, env);
@@ -513,48 +524,41 @@ fn cont_eval_fn(
 }
 
 fn cont_special_let(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
-    let arg_defns = arg_defns_raw.as_list()?;
+    let (arg_def_raws, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
+    let arg_defs = arg_def_raws.into_list()?;
 
-    // Create a new, child environment for the procedure and define the arguments as local variables
-    let proc_env = Environment::new_child(env.clone());
-
-    // Iterate through the provided arguments, defining them
-    if !arg_defns.is_empty() {
-        let (first_defn, rest_defns) = shift_or_error!(arg_defns, "Error in let definiton");
-        let (defn_key, defn_val) = first_defn.as_list()?.unpack2()?;
-        let name = defn_key.as_symbol()?;
-        Ok(Trampoline::Bounce(defn_val, env, Continuation::EvalLet(name, rest_defns, body, proc_env, k)))
-    } else {
-        // Let bindings were empty, just execute the body directly
-        eval(body, env, k)
+    let proc_env = Environment::new_child(env.clone()); // 创建一个新的环境，用于存放 let 绑定的变量
+    match arg_defs.is_empty() {
+        true => eval(body, env, k), // 执行 body
+        false => {
+            let (first_def, rest_defs) = shift_or_error!(arg_defs, "Error in let definiton");
+            match_list!(first_def.into_list()?, [def_key, def_val] => {
+                Ok(Trampoline::Bounce(def_val, env, Continuation::EvalLet(def_key.into_symbol()?, rest_defs, body, proc_env, k)))
+            })
+        }
     }
 }
 
 fn cont_eval_let(
-    name: String, val: Value, rest: List, body: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+    name: String, value: Value, rest: List, body: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
 ) -> Result<Trampoline, RuntimeError> {
-    // Define variable in let scope
-    env.borrow_mut().define(name, val)?;
+    env.borrow_mut().define(name, value)?; // define variable in let scope
     match rest.shift() {
         Some((next_defn, rest_defns)) => {
-            let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
-            let name = defn_key.as_symbol()?;
-            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
+            let (defn_key, defn_val) = next_defn.into_list()?.unpack2()?;
+            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k)))
         }
-        None => {
-            let inner_env = Environment::new_child(env);
-            eval(body, inner_env, k)
-        }
+        None => eval(body, Environment::new_child(env), k),
     }
 }
 
 fn cont_special_if(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    let (condition, if_expr, else_expr) = rest.unpack3()?;
-    Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
+    match_list!(rest, [condition, if_expr, else_expr] => {
+        Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
+    })
 }
 
-fn cont_eval_if(if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
+fn cont_eval_if(val: Value, if_expr: Value, else_expr: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
         _ => Ok(Trampoline::Bounce(if_expr, env, k)),
@@ -562,8 +566,9 @@ fn cont_eval_if(if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<En
 }
 
 fn cont_special_set(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    let (name, val) = rest.unpack2()?;
-    Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.as_symbol()?, env, k)))
+    match_list!(rest, [name, val] => {
+        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.into_symbol()?, env, k)))
+    })
 }
 
 fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
@@ -572,14 +577,15 @@ fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Con
 }
 
 fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    let expr = rest.unpack1()?;
-    match expr {
-        Value::List(list) => match list.shift() {
-            Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k))),
-            None => Ok(Trampoline::Run(null!(), *k)),
-        },
-        _ => Ok(Trampoline::Run(expr, *k)),
-    }
+    match_list!(rest, [expr] => {
+        match expr {
+            Value::List(list) => match list.shift() {
+                Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k))),
+                None => Ok(Trampoline::Run(null!(), *k)),
+            },
+            _ => Ok(Trampoline::Run(expr, *k)),
+        }
+    })
 }
 
 fn cont_continue_quasiquoting(
@@ -593,14 +599,15 @@ fn cont_continue_quasiquoting(
 }
 
 fn cont_special_apply(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    let (f, args) = rest.unpack2()?;
-    Ok(Trampoline::Bounce(f, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
+    match_list!(rest, [f, args] => {
+        Ok(Trampoline::Bounce(f, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
+    })
 }
+
 fn cont_special_begin(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
-        None => runtime_error!("Must provide at least one argument to a begin statement"),
-    }
+    match_list!(rest, head: car, tail: cdr => {
+        Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k)))
+    })
 }
 fn cont_special_and(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
@@ -670,13 +677,13 @@ impl Continuation {
             Continuation::BeginFunc(rest, env, k) => cont_begin_fn(val, rest, env, k),
             Continuation::EvalFunc(f, rest, acc, env, k) => cont_eval_fn(f, val, rest, acc, env, k),
 
-            Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(if_expr, else_expr, val, env, *k),
+            Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(val, if_expr, else_expr, env, *k),
             Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, *k),
             Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, *k),
             Continuation::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
             Continuation::ContinueQuasiquoting(rest, acc, env, k) => cont_continue_quasiquoting(val, rest, acc, env, k),
 
-            Continuation::Apply(f, k) => apply(f, val.as_list()?, k),
+            Continuation::Apply(f, k) => apply(f, val.into_list()?, k),
             Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
 
             Continuation::EvalAnd(rest, env, k) => cont_eval_and(val, rest, env, k),
@@ -732,13 +739,13 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
         return Ok(null!());
     }
 
-    let mut b = eval(exprs, env, Box::new(Continuation::Return))?;
+    let mut result = eval(exprs, env, Box::new(Continuation::Return))?;
     loop {
-        match b {
+        match result {
             // Bounce is the usual execution path. It's used for pretty much everything.
             // Special forms are caught here instead of in env so that they can't be redefined in env.
-            Trampoline::Bounce(a, env, k) => {
-                b = match a {
+            Trampoline::Bounce(val, env, k) => {
+                result = match val {
                     Value::List(list) => match list.shift() {
                         Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Continuation::BeginFunc(cdr, env, Box::new(k))),
                         None => runtime_error!("Can't apply an empty list as a function"),
@@ -767,35 +774,33 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                         };
                         k.run(val)?
                     }
-                    _ => k.run(a)?,
+                    _ => k.run(val)?,
                 }
             }
 
             // QuasiBounce is for quasiquoting mode
-            // it just passes the value right through, UNLESS it's of the form (unquote X), in which case it switches back to regular evaluating mode using X as the value.
-            Trampoline::QuasiBounce(a, env, k) => {
-                b = match a {
+            // it just passes the value right through, UNLESS it's of the form (unquote X), in which case
+            // it switches back to regular evaluating mode using X as the value.
+            Trampoline::QuasiBounce(val, env, k) => {
+                result = match val {
                     Value::List(list) => match list.shift() {
-                        Some((car, cdr)) => match car {
-                            Value::Symbol(ref s) if s == "unquote" => {
-                                let expr = cdr.unpack1()?;
-                                Trampoline::Bounce(expr, env, k)
-                            }
-                            _ => Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, Box::new(k))),
-                        },
+                        Some((symbol, cdr)) if matches!(&symbol, Value::Symbol(s) if s == "unquote") => Trampoline::Bounce(cdr.unpack1()?, env, k),
+                        Some((car, cdr)) => {
+                            Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, Box::new(k)))
+                        }
                         None => k.run(null!())?,
                     },
-                    _ => k.run(a)?,
+                    _ => k.run(val)?,
                 }
             }
 
             // Run doesn't evaluate the value, it just runs k with it.
             // It's similar to running inline, but bounces to avoid growing the stack.
-            Trampoline::Run(a, k) => b = k.run(a)?,
+            Trampoline::Run(val, k) => result = k.run(val)?,
 
             // Land just returns the value.
             // It should only ever be created at the very beginning of process, and will be the last Trampoline value called.
-            Trampoline::Land(a) => return Ok(a),
+            Trampoline::Land(val) => return Ok(val),
         }
     }
 }
@@ -948,59 +953,59 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to <: {:?}", args);
             }
-            let (l, r) = args.unpack2()?;
-            Ok(Value::Boolean(l.as_integer()? < r.as_integer()?))
+            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? < r.into_integer()?)))
         }
         ">" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to >: {:?}", args);
             }
-            let (l, r) = args.unpack2()?;
-            Ok(Value::Boolean(l.as_integer()? > r.as_integer()?))
+            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? > r.into_integer()?)))
         }
         "=" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to =: {:?}", args);
             }
-            let (l, r) = args.unpack2()?;
-            Ok(Value::Boolean(l.as_integer()? == r.as_integer()?))
+            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? == r.into_integer()?)))
         }
         "null?" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to null?: {:?}", args);
             }
-            let v = args.unpack1()?;
-            match v {
-                Value::List(l) => Ok(Value::Boolean(l.is_empty())),
-                _ => Ok(Value::Boolean(false)),
-            }
+            match_list!(args, [value] => {
+                match value {
+                    Value::List(l) => Ok(Value::Boolean(l.is_empty())),
+                    _ => Ok(Value::Boolean(false)),
+                }
+            })
         }
         "integer?" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to integer?: {:?}", args);
             }
-            let v = args.unpack1()?;
-            match v {
-                Value::Integer(_) => Ok(Value::Boolean(true)),
-                _ => Ok(Value::Boolean(false)),
-            }
+            match_list!(args, [value] => {
+                match value {
+                    Value::Integer(_) => Ok(Value::Boolean(true)),
+                    _ => Ok(Value::Boolean(false)),
+                }
+            })
         }
         "float?" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to real?: {:?}", args);
             }
-            let v = args.unpack1()?;
-            match v {
-                Value::Float(_) => Ok(Value::Boolean(true)),
-                _ => Ok(Value::Boolean(false)),
-            }
+            match_list!(args, [value] => {
+                match value {
+                    Value::Float(_) => Ok(Value::Boolean(true)),
+                    _ => Ok(Value::Boolean(false)),
+                }
+            })
         }
         "list" => Ok(args.into_list()),
         "car" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly two arguments to car: {:?}", args);
             }
-            let l = args.unpack1()?.as_list()?;
+            let l = args.unpack1()?.into_list()?;
             match l.shift() {
                 Some((car, _)) => Ok(car),
                 None => runtime_error!("Can't run car on an empty list"),
@@ -1010,7 +1015,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly two arguments to cdr: {:?}", args);
             }
-            let l = args.unpack1()?.as_list()?;
+            let l = args.unpack1()?.into_list()?;
             match l.shift() {
                 Some((_, cdr)) => Ok(cdr.into_list()),
                 None => runtime_error!("Can't run cdr on an empty list"),
@@ -1021,15 +1026,15 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
                 runtime_error!("Must supply exactly two arguments to cons: {:?}", args);
             }
             let (elem, list) = args.unpack2()?;
-            Ok(list.as_list()?.unshift(elem).into_list())
+            Ok(list.into_list()?.unshift(elem).into_list())
         }
         "append" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to append: {:?}", args);
             }
             let (list1raw, list2raw) = args.unpack2()?;
-            let list1 = list1raw.as_list()?;
-            let mut list2 = list2raw.as_list()?;
+            let list1 = list1raw.into_list()?;
+            let mut list2 = list2raw.into_list()?;
 
             for elem in list1.reverse() {
                 list2 = list2.unshift(elem)
@@ -1092,9 +1097,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
 }
 
 #[cfg(test)]
-fn exec(list: List) -> Result<Value, RuntimeError> {
-    process(list, Environment::new_root()?)
-}
+fn exec(list: List) -> Result<Value, RuntimeError> { process(list, Environment::new_root()?) }
 
 #[test]
 fn test_add1() {
