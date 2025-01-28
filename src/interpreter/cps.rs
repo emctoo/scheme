@@ -294,15 +294,9 @@ macro_rules! match_list {
 }
 
 impl List {
-    fn from_vec(src: Vec<Value>) -> List {
-        src.iter().rfold(List::Null, |acc, val| {
-            List::Cell(Box::new(val.clone()), Box::new(acc))
-        })
-    }
+    fn from_vec(src: Vec<Value>) -> List { src.iter().rfold(List::Null, |acc, val| List::Cell(Box::new(val.clone()), Box::new(acc))) }
 
-    fn from_nodes(nodes: &[Node]) -> List {
-        List::from_vec(nodes.iter().map(Value::from_node).collect())
-    }
+    fn from_nodes(nodes: &[Node]) -> List { List::from_vec(nodes.iter().map(Value::from_node).collect()) }
 
     fn is_empty(&self) -> bool { self == &List::Null }
 
@@ -335,13 +329,7 @@ impl List {
         Ok(car)
     }
 
-    fn reverse(self) -> List {
-        let mut out = List::Null;
-        for val in self {
-            out = out.unshift(val)
-        }
-        out
-    }
+    fn reverse(self) -> List { self.into_iter().fold(List::Null, |acc, v| List::Cell(Box::new(v), Box::new(acc))) }
 
     fn into_list(self) -> Value { Value::List(self) }
 
