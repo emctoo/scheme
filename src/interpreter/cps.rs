@@ -415,6 +415,42 @@ pub enum Trampoline {
     Land(Value),
 }
 
+fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
+    let (defn, body) = rest.unpack2()?;
+
+    let (name, arg_names_raw) = match defn.as_list()?.shift() {
+        Some((car, cdr)) => (car.as_symbol()?, cdr),
+        None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
+    };
+
+    let arg_names = arg_names_raw
+        .into_iter()
+        .map(|v| v.as_symbol())
+        .collect::<Result<Vec<String>, RuntimeError>>()?;
+
+    let m = Value::Macro(arg_names, Box::new(body));
+    let _ = env.borrow_mut().define(name, m);
+    Ok(Trampoline::Run(null!(), k))
+}
+
+fn cont_special_macro(
+    rest: List, arg_names: Vec<String>, body: Value, env: Rc<RefCell<Environment>>, k: Continuation,
+) -> Result<Trampoline, RuntimeError> {
+    let args = rest;
+    if arg_names.len() != args.len() {
+        runtime_error!("Must supply exactly {} arguments to macro: {:?}", arg_names.len(), args);
+    }
+
+    // Create a lookup table for symbol substitutions
+    let mut substitutions = HashMap::new();
+    for (name, value) in arg_names.into_iter().zip(args.into_iter()) {
+        substitutions.insert(name, value);
+    }
+
+    let expanded = expand_macro(body, &substitutions); // Expand the macro
+    Ok(Trampoline::Bounce(expanded, env, k)) // Finished expanding macro, now evaluate the code manually
+}
+
 fn cont_special_def(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
     match car {
@@ -437,6 +473,11 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuati
     }
 }
 
+fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
+    env.borrow_mut().define(name, val)?;
+    Ok(Trampoline::Run(null!(), k))
+}
+
 fn cont_special_lambda(rest: List, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
     let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
     let arg_defns = arg_defns_raw.as_list()?;
@@ -448,6 +489,27 @@ fn cont_special_lambda(rest: List, env: Rc<RefCell<Environment>>, k: Continuatio
 
     let f = Function::Scheme(arg_names, body, env);
     Ok(Trampoline::Run(Value::Procedure(f), k))
+}
+
+fn cont_begin_fn(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
+        Value::SpecialForm(f) => cont_special(f, rest, env, k),
+        _ => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(val, cdr, List::Null, env, k))),
+            None => apply(val, List::Null, k),
+        },
+    }
+}
+
+fn cont_eval_fn(
+    f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    let acc2 = acc.unshift(val);
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(f, cdr, acc2, env, k))),
+        None => apply(f, acc2.reverse(), k),
+    }
 }
 
 fn cont_special_let(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
@@ -469,39 +531,22 @@ fn cont_special_let(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuati
     }
 }
 
-fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
-    let (defn, body) = rest.unpack2()?;
-
-    let (name, arg_names_raw) = match defn.as_list()?.shift() {
-        Some((car, cdr)) => (car.as_symbol()?, cdr),
-        None => runtime_error!("Must supply at least two params to first argument in define-syntax-rule"),
-    };
-
-    let arg_names = arg_names_raw
-        .into_iter()
-        .map(|v| v.as_symbol())
-        .collect::<Result<Vec<String>, RuntimeError>>()?;
-
-    let m = Value::Macro(arg_names, Box::new(body));
-    let _ = env.borrow_mut().define(name, m);
-    Ok(Trampoline::Run(null!(), k))
-}
-fn cont_special_macro(
-    rest: List, arg_names: Vec<String>, body: Value, env: Rc<RefCell<Environment>>, k: Continuation,
+fn cont_eval_let(
+    name: String, val: Value, rest: List, body: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
 ) -> Result<Trampoline, RuntimeError> {
-    let args = rest;
-    if arg_names.len() != args.len() {
-        runtime_error!("Must supply exactly {} arguments to macro: {:?}", arg_names.len(), args);
+    // Define variable in let scope
+    env.borrow_mut().define(name, val)?;
+    match rest.shift() {
+        Some((next_defn, rest_defns)) => {
+            let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
+            let name = defn_key.as_symbol()?;
+            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
+        }
+        None => {
+            let inner_env = Environment::new_child(env);
+            eval(body, inner_env, k)
+        }
     }
-
-    // Create a lookup table for symbol substitutions
-    let mut substitutions = HashMap::new();
-    for (name, value) in arg_names.into_iter().zip(args.into_iter()) {
-        substitutions.insert(name, value);
-    }
-
-    let expanded = expand_macro(body, &substitutions); // Expand the macro
-    Ok(Trampoline::Bounce(expanded, env, k)) // Finished expanding macro, now evaluate the code manually
 }
 
 fn cont_special_if(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
@@ -509,9 +554,21 @@ fn cont_special_if(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuatio
     Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
 }
 
+fn cont_eval_if(if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
+        _ => Ok(Trampoline::Bounce(if_expr, env, k)),
+    }
+}
+
 fn cont_special_set(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     let (name, val) = rest.unpack2()?;
     Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.as_symbol()?, env, k)))
+}
+
+fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
+    env.borrow_mut().set(name, val)?;
+    Ok(Trampoline::Run(null!(), k))
 }
 
 fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
@@ -522,6 +579,16 @@ fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Environment>>, k: Box<Con
             None => Ok(Trampoline::Run(null!(), *k)),
         },
         _ => Ok(Trampoline::Run(expr, *k)),
+    }
+}
+
+fn cont_continue_quasiquoting(
+    val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
+) -> Result<Trampoline, RuntimeError> {
+    let acc2 = acc.unshift(val);
+    match rest.shift() {
+        Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
+        None => Ok(Trampoline::Run(acc2.reverse().into_list(), *k)),
     }
 }
 
@@ -541,6 +608,17 @@ fn cont_special_and(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuati
         None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
     }
 }
+
+fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        _ => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
+            None => Ok(Trampoline::Run(val, *k)),
+        },
+    }
+}
+
 fn cont_special_or(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
         Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
@@ -548,7 +626,17 @@ fn cont_special_or(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuatio
     }
 }
 
-fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError>  {
+fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Boolean(false) => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
+            None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        },
+        _ => Ok(Trampoline::Run(val, *k)),
+    }
+}
+
+fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match f {
         SpecialForm::If => cont_special_if(rest, env, k),
         SpecialForm::Define => cont_special_def(rest, env, k),
@@ -567,17 +655,6 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Bo
     }
 }
 
-fn cont_begin_fn(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
-        Value::SpecialForm(f) => cont_special(f, rest, env, k),
-        _ => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(val, cdr, List::Null, env, k))),
-            None => apply(val, List::Null, k),
-        },
-    }
-}
-
 fn cont_eval_expr(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     if !rest.is_empty() {
         eval(rest, env, k)
@@ -586,86 +663,14 @@ fn cont_eval_expr(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<
     }
 }
 
-fn cont_eval_fn(
-    f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
-) -> Result<Trampoline, RuntimeError> {
-    let acc2 = acc.unshift(val);
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalFunc(f, cdr, acc2, env, k))),
-        None => apply(f, acc2.reverse(), k),
-    }
-}
-
-fn cont_eval_if(if_expr: Value, else_expr: Value, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
-        _ => Ok(Trampoline::Bounce(if_expr, env, k)),
-    }
-}
-
-fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
-    env.borrow_mut().define(name, val)?;
-    Ok(Trampoline::Run(null!(), k))
-}
-
-fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Environment>>, k: Continuation) -> Result<Trampoline, RuntimeError> {
-    env.borrow_mut().set(name, val)?;
-    Ok(Trampoline::Run(null!(), k))
-}
-
-fn cont_eval_let(
-    name: String, val: Value, rest: List, body: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
-) -> Result<Trampoline, RuntimeError> {
-    // Define variable in let scope
-    env.borrow_mut().define(name, val)?;
-    match rest.shift() {
-        Some((next_defn, rest_defns)) => {
-            let (defn_key, defn_val) = next_defn.as_list()?.unpack2()?;
-            let name = defn_key.as_symbol()?;
-            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(name, rest_defns, body, env, k)))
-        }
-        None => {
-            let inner_env = Environment::new_child(env);
-            eval(body, inner_env, k)
-        }
-    }
-}
-
-fn cont_continue_quasiquoting(
-    val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
-) -> Result<Trampoline, RuntimeError> {
-    let acc2 = acc.unshift(val);
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
-        None => Ok(Trampoline::Run(acc2.reverse().into_list(), *k)),
-    }
-}
-
-fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
-        _ => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalAnd(cdr, env, k))),
-            None => Ok(Trampoline::Run(val, *k)),
-        },
-    }
-}
-
-fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalOr(cdr, env, k))),
-            None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
-        },
-        _ => Ok(Trampoline::Run(val, *k)),
-    }
-}
 impl Continuation {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
             Continuation::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
+
             Continuation::BeginFunc(rest, env, k) => cont_begin_fn(val, rest, env, k),
             Continuation::EvalFunc(f, rest, acc, env, k) => cont_eval_fn(f, val, rest, acc, env, k),
+
             Continuation::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(if_expr, else_expr, val, env, *k),
             Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, *k),
             Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, *k),
@@ -685,31 +690,29 @@ impl Continuation {
     }
 }
 
-fn apply_function(f: Function, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match f {
-        Function::Native(native_func) => Ok(Trampoline::Run(primitive(native_func, args)?, *k)),
-        Function::Scheme(arg_names, body, env) => {
-            if arg_names.len() != args.len() {
-                runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
-            }
-
-            // Create a new, child environment for the procedure and define the arguments as local variables
-            let proc_env = Environment::new_child(env);
-            arg_names
-                .into_iter()
-                .zip(args)
-                .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
-
-            // Evaluate procedure body with new environment with procedure environment as parent
-            eval(body, Environment::new_child(proc_env), k)
-        }
-    }
-}
-
 fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Continuation(c) => Ok(Trampoline::Run(args.into_list(), *c)),
-        Value::Procedure(func) => apply_function(func, args, k),
+        Value::Procedure(f) => {
+            match f {
+                Function::Native(native_func) => Ok(Trampoline::Run(primitive(native_func, args)?, *k)),
+                Function::Scheme(arg_names, body, env) => {
+                    if arg_names.len() != args.len() {
+                        runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
+                    }
+
+                    // Create a new, child environment for the procedure and define the arguments as local variables
+                    let proc_env = Environment::new_child(env);
+                    arg_names
+                        .into_iter()
+                        .zip(args)
+                        .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
+
+                    // Evaluate procedure body with new environment with procedure environment as parent
+                    eval(body, Environment::new_child(proc_env), k)
+                }
+            }
+        }
         _ => runtime_error!("Don't know how to apply: {:?}", val),
     }
 }
@@ -717,11 +720,11 @@ fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, Run
 fn expand_macro(value: Value, substitutions: &HashMap<String, Value>) -> Value {
     match value {
         Value::Symbol(s) => match substitutions.get(&s) {
-            Some(v) => v.clone(),
+            Some(val) => val.clone(),
             None => Value::Symbol(s),
         },
         Value::List(list) => {
-            let expanded = list.into_iter().map(|v| expand_macro(v, substitutions)).collect();
+            let expanded = list.into_iter().map(|val| expand_macro(val, substitutions)).collect();
             Value::from_vec(expanded)
         }
         other => other,
