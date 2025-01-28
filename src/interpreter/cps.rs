@@ -656,10 +656,9 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Bo
 }
 
 fn cont_eval_expr(val: Value, rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    if !rest.is_empty() {
-        eval(rest, env, k)
-    } else {
-        Ok(Trampoline::Run(val, *k))
+    match rest.is_empty() {
+        true => Ok(Trampoline::Run(val, *k)),
+        false => eval(rest, env, k),
     }
 }
 
@@ -693,41 +692,23 @@ impl Continuation {
 fn apply(val: Value, args: List, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Continuation(c) => Ok(Trampoline::Run(args.into_list(), *c)),
-        Value::Procedure(f) => {
-            match f {
-                Function::Native(native_func) => Ok(Trampoline::Run(primitive(native_func, args)?, *k)),
-                Function::Scheme(arg_names, body, env) => {
-                    if arg_names.len() != args.len() {
-                        runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
-                    }
-
-                    // Create a new, child environment for the procedure and define the arguments as local variables
-                    let proc_env = Environment::new_child(env);
-                    arg_names
-                        .into_iter()
-                        .zip(args)
-                        .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
-
-                    // Evaluate procedure body with new environment with procedure environment as parent
-                    eval(body, Environment::new_child(proc_env), k)
-                }
+        Value::Procedure(Function::Native(f)) => Ok(Trampoline::Run(primitive(f, args)?, *k)),
+        Value::Procedure(Function::Scheme(arg_names, body, env)) => {
+            if arg_names.len() != args.len() {
+                runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
             }
+
+            // Create a new, child environment for the procedure and define the arguments as local variables
+            let proc_env = Environment::new_child(env);
+            arg_names
+                .into_iter()
+                .zip(args)
+                .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
+
+            // Evaluate procedure body with new environment with procedure environment as parent
+            eval(body, Environment::new_child(proc_env), k)
         }
         _ => runtime_error!("Don't know how to apply: {:?}", val),
-    }
-}
-
-fn expand_macro(value: Value, substitutions: &HashMap<String, Value>) -> Value {
-    match value {
-        Value::Symbol(s) => match substitutions.get(&s) {
-            Some(val) => val.clone(),
-            None => Value::Symbol(s),
-        },
-        Value::List(list) => {
-            let expanded = list.into_iter().map(|val| expand_macro(val, substitutions)).collect();
-            Value::from_vec(expanded)
-        }
-        other => other,
     }
 }
 
@@ -735,6 +716,14 @@ fn eval(expr: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Resu
     match expr.shift() {
         Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k))),
         None => runtime_error!("trying to evaluate an empty expression list"),
+    }
+}
+
+fn expand_macro(expr: Value, substitutions: &HashMap<String, Value>) -> Value {
+    match expr {
+        Value::Symbol(s) => substitutions.get(&s).cloned().unwrap_or(Value::Symbol(s)),
+        Value::List(list) => Value::from_vec(list.into_iter().map(|val| expand_macro(val, substitutions)).collect()),
+        _ => expr,
     }
 }
 
