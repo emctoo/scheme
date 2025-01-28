@@ -37,7 +37,7 @@ fn main() {
 fn repl(interpreter: interpreter::Interpreter) {
     let history = Box::new(FileBackedHistory::with_file(1000, ".scheme_history".into()).unwrap());
     let mut line_editor = Reedline::create().with_history(history);
-    let prompt = DefaultPrompt::new(DefaultPromptSegment::Basic("scheme ".into()), DefaultPromptSegment::Empty);
+    let prompt = DefaultPrompt::new(DefaultPromptSegment::Basic("λ ".into()), DefaultPromptSegment::Empty);
     loop {
         let sig = line_editor.read_line(&prompt);
         match sig {
