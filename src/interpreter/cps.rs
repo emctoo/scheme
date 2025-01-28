@@ -343,16 +343,6 @@ impl List {
         Ok(car)
     }
 
-    /// (car (cadr '())) -> (car cadr)
-    fn unpack2(self) -> Result<(Value, Value), RuntimeError> {
-        let (car, cdr) = shift_or_error!(self, "Expected list of length 2, but was empty");
-        let (cadr, cddr) = shift_or_error!(cdr, "Expected list of length 2, but was length 1");
-        if !cddr.is_empty() {
-            runtime_error!("Expected list of length 2, but it had more elements")
-        }
-        Ok((car, cadr))
-    }
-
     fn reverse(self) -> List {
         let mut out = List::Null;
         for val in self {
@@ -544,10 +534,9 @@ fn cont_eval_let(
 ) -> Result<Trampoline, RuntimeError> {
     env.borrow_mut().define(name, value)?; // define variable in let scope
     match rest.shift() {
-        Some((next_defn, rest_defns)) => {
-            let (defn_key, defn_val) = next_defn.into_list()?.unpack2()?;
+        Some((next_defn, rest_defns)) => match_list!(next_defn.into_list()?, [defn_key, defn_val] => {
             Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k)))
-        }
+        }),
         None => eval(body, Environment::new_child(env), k),
     }
 }
@@ -1025,21 +1014,21 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to cons: {:?}", args);
             }
-            let (elem, list) = args.unpack2()?;
-            Ok(list.into_list()?.unshift(elem).into_list())
+            match_list!(args, [elem, list] => Ok(list.into_list()?.unshift(elem).into_list()))
         }
         "append" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to append: {:?}", args);
             }
-            let (list1raw, list2raw) = args.unpack2()?;
-            let list1 = list1raw.into_list()?;
-            let mut list2 = list2raw.into_list()?;
+            match_list!(args, [list1raw, list2raw] => {
+                let list1 = list1raw.into_list()?;
+                let mut list2 = list2raw.into_list()?;
 
-            for elem in list1.reverse() {
-                list2 = list2.unshift(elem)
-            }
-            Ok(list2.into_list())
+                for elem in list1.reverse() {
+                    list2 = list2.unshift(elem)
+                }
+                Ok(list2.into_list())
+            })
         }
         "error" => {
             if args.len() != 1 {
