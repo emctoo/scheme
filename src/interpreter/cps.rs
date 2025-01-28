@@ -294,22 +294,14 @@ macro_rules! match_list {
 }
 
 impl List {
-    fn from_vec(mut vec: Vec<Value>) -> List {
-        match vec.is_empty() {
-            true => List::Null,
-            false => {
-                let mut out = List::Null;
-                while let Some(v) = vec.pop() {
-                    out = List::Cell(Box::new(v), Box::new(out));
-                }
-                out
-            }
-        }
+    fn from_vec(src: Vec<Value>) -> List {
+        src.iter().rfold(List::Null, |acc, val| {
+            List::Cell(Box::new(val.clone()), Box::new(acc))
+        })
     }
 
     fn from_nodes(nodes: &[Node]) -> List {
-        let vec = nodes.iter().map(Value::from_node).collect();
-        List::from_vec(vec)
+        List::from_vec(nodes.iter().map(Value::from_node).collect())
     }
 
     fn is_empty(&self) -> bool { self == &List::Null }
