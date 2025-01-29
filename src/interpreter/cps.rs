@@ -248,9 +248,7 @@ pub enum List {
 
 // null == empty list
 macro_rules! null {
-    () => {
-        List::Null.into_list()
-    };
+    () => { List::Null.into_list() }
 }
 
 macro_rules! match_list {
@@ -293,6 +291,24 @@ macro_rules! match_list {
             _ => Err(RuntimeError { message: "Expected non-empty list".into() }),
         }
     };
+}
+
+macro_rules! match_list_cases {
+    ($list:expr, {
+        $( [$($pat:tt)*] => $expr:expr ),+ $(,)*
+    }) => {{
+        let candidate = $list.clone(); // 原列表
+        let mut result: Result<_, RuntimeError> = Err(RuntimeError {
+            message: "No pattern matched".into(),
+        });
+        $(
+            // 依次用 match_list! 尝试匹配
+            if result.is_err() {
+                result = match_list!(candidate.clone(), [$($pat)*] => $expr);
+            }
+        )+
+        result
+    }};
 }
 
 #[cfg(test)]
@@ -374,6 +390,30 @@ mod test_match_list {
         let empty = List::Null;
         let result = match_list!(empty, head: Value::Integer(_), tail: _ => true);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_match_scheme() {
+        let list1 = List::from_vec(vec![Value::Integer(1), Value::Integer(2)]);
+        let result1 = match_list_cases!(list1, {
+            [Value::Integer(x), Value::Integer(y)] => x + y,
+            [Value::Integer(x)] => x
+        });
+        assert_eq!(result1.unwrap(), 3);
+
+        let list2 = List::from_vec(vec![Value::String("hello".to_string())]);
+        let result2 = match_list_cases!(list2, {
+            [Value::Integer(x), Value::Integer(y)] => x + y,
+            [Value::String(s)] => s.len() as i64
+        });
+        assert_eq!(result2.unwrap(), 5);
+
+        let list3 = List::from_vec(vec![Value::Boolean(true)]);
+        let result3 = match_list_cases!(list3, {
+            [Value::Integer(x)] => x,
+            [Value::String(s)] => s.len() as i64
+        });
+        assert!(result3.is_err());
     }
 }
 
