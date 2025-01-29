@@ -2,9 +2,7 @@ use std::fmt;
 use std::iter;
 use std::str;
 
-pub fn tokenize(s: &str) -> Result<Vec<Token>, SyntaxError> {
-    Lexer::tokenize(s)
-}
+pub fn tokenize(s: &str) -> Result<Vec<Token>, SyntaxError> { Lexer::tokenize(s) }
 
 #[derive(PartialEq, Debug)]
 pub enum Token {
@@ -13,6 +11,7 @@ pub enum Token {
     Quote,
     Quasiquote,
     Unquote,
+    UnquoteSplicing,
     Identifier(String),
     Integer(i64),
     Float(f64),
@@ -27,14 +26,11 @@ pub struct SyntaxError {
 }
 
 impl fmt::Display for SyntaxError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column) }
 }
+
 impl fmt::Debug for SyntaxError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "SyntaxError: {} (line: {}, column: {})", self.message, self.line, self.column) }
 }
 
 macro_rules! syntax_error {
@@ -64,9 +60,7 @@ impl<'a> Lexer<'a> {
         Ok(lexer.tokens)
     }
 
-    fn current(&self) -> Option<char> {
-        self.current
-    }
+    fn current(&self) -> Option<char> { self.current }
 
     fn advance(&mut self) {
         if self.current() == Some('\x0a') {
@@ -78,9 +72,7 @@ impl<'a> Lexer<'a> {
         self.current = self.chars.next();
     }
 
-    fn peek(&mut self) -> Option<char> {
-        self.chars.peek().map(|c| *c)
-    }
+    fn peek(&mut self) -> Option<char> { self.chars.peek().map(|c| *c) }
 
     fn run(&mut self) -> Result<(), SyntaxError> {
         self.advance();
@@ -105,11 +97,11 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
-                '(' => {
+                '(' | '[' => {
                     self.tokens.push(Token::OpenParen);
                     self.advance();
                 }
-                ')' => {
+                ')' | ']' => {
                     self.tokens.push(Token::CloseParen);
                     self.advance();
                 }
@@ -122,17 +114,20 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 ',' => {
+                    if self.peek() == Some('@') {
+                        self.tokens.push(Token::UnquoteSplicing);
+                        self.advance();
+                        self.advance();
+                    }
+
                     self.tokens.push(Token::Unquote);
                     self.advance();
                 }
                 '+' | '-' => {
                     match self.peek() {
                         Some('0'..='9') => {
-                            // skip past the +/- symbol and parse the number
-                            self.advance();
+                            self.advance(); // skip past the +/- symbol and parse the number
 
-                            // let val = self.parse_integer()?;
-                            // self.tokens.push(Token::Integer(if c == '-' { -val } else { val }));
                             let is_negative = c == '-';
                             let token = self.parse_number(is_negative)?;
                             self.tokens.push(token);
@@ -164,7 +159,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push(Token::String(val));
                     self.parse_delimiter()?;
                 }
-                '[' | ']' | '{' | '}' | '|' | '\\' => {
+                '{' | '}' | '|' | '\\' => {
                     syntax_error!(self, "Unexpected character: {}", c);
                 }
                 _ => {
@@ -402,10 +397,6 @@ fn test_lexer_whitespace() {
     );
 }
 
-#[test]
-fn test_lexer_bad_syntax() {
-    assert_eq!(tokenize("([)").err().unwrap().to_string(), "SyntaxError: Unexpected character: [ (line: 1, column: 2)");
-}
 
 #[test]
 fn test_lexer_delimiter_checking() {
@@ -488,7 +479,7 @@ fn test_lexer_complex_code_block() {
         tokenize(
             r"(define (list-of-squares n)
                 (let loop ((i n) (res (list)))
-                  (if (< i 0) res 
+                  (if (< i 0) res
                 (loop (- i 1) (cons (* i i) res)))))"
         )
         .unwrap(),

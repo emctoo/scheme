@@ -3,9 +3,7 @@ use crate::reader::lexer::*;
 use std::fmt;
 use std::slice;
 
-pub fn parse(tokens: &Vec<Token>) -> Result<Vec<Node>, ParseError> {
-    Parser::parse(tokens)
-}
+pub fn parse(tokens: &Vec<Token>) -> Result<Vec<Node>, ParseError> { Parser::parse(tokens) }
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Node {
@@ -22,14 +20,10 @@ pub struct ParseError {
 }
 
 impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ParseError: {}", self.message)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "ParseError: {}", self.message) }
 }
 impl fmt::Debug for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ParseError: {}", self.message)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "ParseError: {}", self.message) }
 }
 
 macro_rules! parse_error {
@@ -65,10 +59,7 @@ impl<'a> Parser<'a> {
     fn parse_node(&mut self, depth: u32) -> Result<Option<Node>, ParseError> {
         match self.tokens.next() {
             Some(token) => match *token {
-                Token::OpenParen => {
-                    let inner = self.parse_nodes(depth + 1)?;
-                    Ok(Some(Node::List(inner)))
-                }
+                Token::OpenParen => Ok(Some(Node::List(self.parse_nodes(depth + 1)?))),
                 Token::CloseParen => {
                     if depth > 0 {
                         Ok(None)
@@ -77,25 +68,20 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Token::Quote => match self.parse_node(depth)? {
-                    Some(inner) => {
-                        let quoted = Node::List(vec![Node::Identifier("quote".to_string()), inner]);
-                        Ok(Some(quoted))
-                    }
+                    Some(inner) => Ok(Some(Node::List(vec![Node::Identifier("quote".to_string()), inner]))),
                     None => parse_error!("Missing quoted value, depth: {}", depth),
                 },
                 Token::Quasiquote => match self.parse_node(depth)? {
-                    Some(inner) => {
-                        let quoted = Node::List(vec![Node::Identifier("quasiquote".to_string()), inner]);
-                        Ok(Some(quoted))
-                    }
+                    Some(inner) => Ok(Some(Node::List(vec![Node::Identifier("quasiquote".to_string()), inner]))),
                     None => parse_error!("Missing quasiquoted value, depth: {}", depth),
                 },
                 Token::Unquote => match self.parse_node(depth)? {
-                    Some(inner) => {
-                        let quoted = Node::List(vec![Node::Identifier("unquote".to_string()), inner]);
-                        Ok(Some(quoted))
-                    }
+                    Some(inner) => Ok(Some(Node::List(vec![Node::Identifier("unquote".to_string()), inner]))),
                     None => parse_error!("Missing unquoted value, depth: {}", depth),
+                },
+                Token::UnquoteSplicing => match self.parse_node(depth)? {
+                    Some(inner) => Ok(Some(Node::List(vec![Node::Identifier("unquote-splicing".to_string()), inner]))),
+                    None => parse_error!("Missing unquote-spliced value, depth: {}", depth),
                 },
                 Token::Identifier(ref val) => Ok(Some(Node::Identifier(val.clone()))),
                 Token::Integer(val) => Ok(Some(Node::Integer(val))),

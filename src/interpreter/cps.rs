@@ -257,42 +257,124 @@ macro_rules! match_list {
     // 匹配空列表
     ($list:expr, [] => $empty_expr:expr) => {
         match $list {
-            List::Null => $empty_expr,
-            _ => runtime_error!("Expected empty list"),
+            List::Null => Ok($empty_expr),
+            _ => Err(RuntimeError { message: "Expected empty list".into() }),
         }
     };
 
     // 匹配单个元素
     ($list:expr, [$x:pat] => $expr:expr) => {
         match $list {
-            List::Cell(box $x, box List::Null) => $expr,
-            _ => runtime_error!("Expected list of length 1"),
+            List::Cell(box $x, box List::Null) => Ok($expr),
+            _ => Err(RuntimeError { message: "Expected list of length 1".into() }),
         }
     };
 
     // 匹配两个元素
     ($list:expr, [$x:pat, $y:pat] => $expr:expr) => {
         match $list {
-            List::Cell(box $x, box List::Cell(box $y, box List::Null)) => $expr,
-            _ => runtime_error!("Expected list of length 2"),
+            List::Cell(box $x, box List::Cell(box $y, box List::Null)) => Ok($expr),
+            _ => Err(RuntimeError { message: "Expected list of length 2".into() }),
         }
     };
 
     // 匹配三个元素
     ($list:expr, [$x:pat, $y:pat, $z:pat] => $expr:expr) => {
         match $list {
-            List::Cell(box $x, box List::Cell(box $y, box List::Cell(box $z, box List::Null))) => $expr,
-            _ => runtime_error!("Expected list of length 3"),
+            List::Cell(box $x, box List::Cell(box $y, box List::Cell(box $z, box List::Null))) => Ok($expr),
+            _ => Err(RuntimeError { message: "Expected list of length 3".into() }),
         }
     };
 
     // 匹配 head 和 tail
     ($list:expr, head: $x:pat, tail: $xs:pat => $expr:expr) => {
         match $list {
-            List::Cell(box $x, box $xs) => $expr,
-            _ => runtime_error!("Expected non-empty list"),
+            List::Cell(box $x, box $xs) => Ok($expr),
+            _ => Err(RuntimeError { message: "Expected non-empty list".into() }),
         }
     };
+}
+
+#[cfg(test)]
+mod test_match_list {
+    use super::*;
+
+    // 辅助函数,创建测试用的列表
+    fn create_list(values: Vec<Value>) -> List {
+        let mut list = List::Null;
+        for value in values.into_iter().rev() {
+            list = List::Cell(Box::new(value), Box::new(list));
+        }
+        list
+    }
+
+    #[test]
+    fn test_empty_list_success() {
+        let empty = List::Null;
+        let result: Result<bool, RuntimeError> = match_list!(empty, [] => true);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn test_empty_list_failure() {
+        // 测试非空列表应该返回错误
+        let non_empty = create_list(vec![Value::Integer(1)]);
+        assert!(matches!(match_list!(non_empty, [] => true), Err::<bool, RuntimeError>(_)));
+    }
+
+    #[test]
+    fn test_single_element() {
+        let single = create_list(vec![Value::Integer(1)]);
+        let result = match_list!(single, [Value::Integer(n)] => n == 1);
+        assert!(result.unwrap());
+
+        // 测试空列表应该panic
+        let empty = List::Null;
+        let result = match_list!(empty, [Value::Integer(_)] => true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_two_elements() {
+        let two = create_list(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list!(two, [Value::Integer(x), Value::Integer(y)] => x == 1 && y == 2);
+        assert!(result.unwrap());
+
+        // 测试长度不匹配应该panic
+        let one = create_list(vec![Value::Integer(1)]);
+        let result = match_list!(one, [Value::Integer(_), Value::Integer(_)] => true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_three_elements() {
+        let three = create_list(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
+        let result = match_list!(three,
+            [Value::Integer(x), Value::Integer(y), Value::Integer(z)] =>
+            x == 1 && y == 2 && z == 3
+        );
+        assert!(result.unwrap());
+
+        // 测试长度不匹配应该panic
+        let two = create_list(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list!(two, [Value::Integer(_), Value::Integer(_), Value::Integer(_)] => true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_head_tail() {
+        let list = create_list(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
+        let result = match_list!(list, head: Value::Integer(x), tail: rest => {
+            x == 1 && matches!(rest, List::Cell(..))
+        });
+        assert!(result.unwrap());
+
+        // 测试空列表应该panic
+        let empty = List::Null;
+        let result = match_list!(empty, head: Value::Integer(_), tail: _ => true);
+        assert!(result.is_err());
+    }
 }
 
 impl List {
@@ -301,6 +383,15 @@ impl List {
     fn from_nodes(nodes: &[Node]) -> List { List::from_vec(nodes.iter().map(Value::from_node).collect()) }
 
     fn is_empty(&self) -> bool { self == &List::Null }
+
+    /// (car cdr) -> car
+    fn car(self) -> Result<Value, RuntimeError> {
+        let (car, cdr) = shift_or_error!(self, "Expected list of length 1, but was empty");
+        if !cdr.is_empty() {
+            runtime_error!("Expected list of length 1, but it had more elements")
+        }
+        Ok(car)
+    }
 
     /// Null => None
     /// List => Some((car cdr)
@@ -320,15 +411,6 @@ impl List {
             List::Cell(_, ref cdr) => 1 + cdr.len(),
             List::Null => 0,
         }
-    }
-
-    /// (car cdr) -> car
-    fn unpack1(self) -> Result<Value, RuntimeError> {
-        let (car, cdr) = shift_or_error!(self, "Expected list of length 1, but was empty");
-        if !cdr.is_empty() {
-            runtime_error!("Expected list of length 1, but it had more elements")
-        }
-        Ok(car)
     }
 
     fn reverse(self) -> List { self.into_iter().fold(List::Null, |acc, v| List::Cell(Box::new(v), Box::new(acc))) }
@@ -383,7 +465,7 @@ pub enum Continuation {
     EvalFunc(Value, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
     EvalLet(String, List, List, Rc<RefCell<Environment>>, Box<Continuation>),
 
-    ContinueQuasiquoting(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
+    ContinueQuasiquote(List, List, Rc<RefCell<Environment>>, Box<Continuation>),
 
     Eval(Rc<RefCell<Environment>>, Box<Continuation>),
     EvalApplyArgs(Value, Rc<RefCell<Environment>>, Box<Continuation>),
@@ -398,7 +480,7 @@ pub enum Continuation {
 
 pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Environment>>, Continuation),
-    QuasiBounce(Value, Rc<RefCell<Environment>>, Continuation),
+    QuasiquoteBounce(Value, Rc<RefCell<Environment>>, Continuation),
     Run(Value, Continuation),
     Land(Value),
 }
@@ -415,7 +497,7 @@ fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Environment>>, k:
             .collect::<Result<Vec<String>, RuntimeError>>()?;
 
         let _ = env.borrow_mut().define(name, Value::Macro(arg_names, Box::new(body)));
-        Ok(Trampoline::Run(null!(), k))
+        Trampoline::Run(null!(), k)
     })
 }
 
@@ -440,7 +522,7 @@ fn cont_special_macro(
 fn cont_special_def(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
     match car {
-        Value::Symbol(name) => match_list!(cdr, [val] => Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k)))),
+        Value::Symbol(name) => match_list!(cdr, [val] => Trampoline::Bounce(val, env.clone(), Continuation::EvalDef(name, env, k))),
         Value::List(list) => {
             let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
             let name = caar.into_symbol()?;
@@ -505,7 +587,7 @@ fn cont_special_let(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuati
         false => {
             let (first_def, rest_defs) = shift_or_error!(arg_defs, "Error in let definiton");
             match_list!(first_def.into_list()?, [def_key, def_val] => {
-                Ok(Trampoline::Bounce(def_val, env, Continuation::EvalLet(def_key.into_symbol()?, rest_defs, body, proc_env, k)))
+                Trampoline::Bounce(def_val, env, Continuation::EvalLet(def_key.into_symbol()?, rest_defs, body, proc_env, k))
             })
         }
     }
@@ -517,7 +599,7 @@ fn cont_eval_let(
     env.borrow_mut().define(name, value)?; // define variable in let scope
     match rest.shift() {
         Some((next_defn, rest_defns)) => match_list!(next_defn.into_list()?, [defn_key, defn_val] => {
-            Ok(Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k)))
+            Trampoline::Bounce(defn_val, env.clone(), Continuation::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k))
         }),
         None => eval(body, Environment::new_child(env), k),
     }
@@ -525,7 +607,7 @@ fn cont_eval_let(
 
 fn cont_special_if(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match_list!(rest, [condition, if_expr, else_expr] => {
-        Ok(Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k)))
+        Trampoline::Bounce(condition, env.clone(), Continuation::EvalIf(if_expr, else_expr, env, k))
     })
 }
 
@@ -538,7 +620,7 @@ fn cont_eval_if(val: Value, if_expr: Value, else_expr: Value, env: Rc<RefCell<En
 
 fn cont_special_set(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match_list!(rest, [name, val] => {
-        Ok(Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.into_symbol()?, env, k)))
+        Trampoline::Bounce(val, env.clone(), Continuation::EvalSet(name.into_symbol()?, env, k))
     })
 }
 
@@ -551,34 +633,31 @@ fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Environment>>, k: Box<Con
     match_list!(rest, [expr] => {
         match expr {
             Value::List(list) => match list.shift() {
-                Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, k))),
-                None => Ok(Trampoline::Run(null!(), *k)),
+                Some((car, cdr)) => Trampoline::QuasiquoteBounce(car, env.clone(), Continuation::ContinueQuasiquote(cdr, List::Null, env, k)),
+                None => Trampoline::Run(null!(), *k),
             },
-            _ => Ok(Trampoline::Run(expr, *k)),
+            // 其他类型的都用 cont 直接算
+            _ => Trampoline::Run(expr, *k),
         }
     })
 }
 
-fn cont_continue_quasiquoting(
+fn cont_continue_quasiquote(
     val: Value, rest: List, acc: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>,
 ) -> Result<Trampoline, RuntimeError> {
     let acc2 = acc.unshift(val);
     match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, acc2, env, k))),
+        Some((car, cdr)) => Ok(Trampoline::QuasiquoteBounce(car, env.clone(), Continuation::ContinueQuasiquote(cdr, acc2, env, k))),
         None => Ok(Trampoline::Run(acc2.reverse().into_list(), *k)),
     }
 }
 
 fn cont_special_apply(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, [f, args] => {
-        Ok(Trampoline::Bounce(f, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
-    })
+    match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Continuation::EvalApplyArgs(args, env, k)))
 }
 
 fn cont_special_begin(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, head: car, tail: cdr => {
-        Ok(Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k)))
-    })
+    match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Continuation::EvalExpr(cdr, env, k)))
 }
 fn cont_special_and(rest: List, env: Rc<RefCell<Environment>>, k: Box<Continuation>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
@@ -621,14 +700,14 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Environment>>, k: Bo
         SpecialForm::Set => cont_special_set(rest, env, k),
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
-        SpecialForm::Quote => Ok(Trampoline::Run(rest.unpack1()?, *k)),
+        SpecialForm::Quote => Ok(Trampoline::Run(rest.car()?, *k)),
         SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
-        SpecialForm::Eval => Ok(Trampoline::Bounce(rest.unpack1()?, env.clone(), Continuation::Eval(env, k))),
+        SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Continuation::Eval(env, k))),
         SpecialForm::Apply => cont_special_apply(rest, env, k),
         SpecialForm::Begin => cont_special_begin(rest, env, k),
         SpecialForm::And => cont_special_and(rest, env, k),
         SpecialForm::Or => cont_special_or(rest, env, k),
-        SpecialForm::CallCC => Ok(Trampoline::Bounce(rest.unpack1()?, env, Continuation::ExecCallCC(k))),
+        SpecialForm::CallCC => Ok(Trampoline::Bounce(rest.car()?, env, Continuation::ExecCallCC(k))),
         SpecialForm::DefineSyntaxRule => cont_special_define_syntax_rule(rest, env, *k),
     }
 }
@@ -652,7 +731,7 @@ impl Continuation {
             Continuation::EvalDef(name, env, k) => cont_eval_def(name, val, env, *k),
             Continuation::EvalSet(name, env, k) => cont_eval_set(name, val, env, *k),
             Continuation::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
-            Continuation::ContinueQuasiquoting(rest, acc, env, k) => cont_continue_quasiquoting(val, rest, acc, env, k),
+            Continuation::ContinueQuasiquote(rest, acc, env, k) => cont_continue_quasiquote(val, rest, acc, env, k),
 
             Continuation::Apply(f, k) => apply(f, val.into_list()?, k),
             Continuation::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
@@ -738,12 +817,12 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                         Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Continuation::BeginFunc(cdr, env, Box::new(k))),
                         None => runtime_error!("Can't apply an empty list as a function"),
                     },
-                    Value::Symbol(ref s) => {
-                        let val = match SPECIAL_FORMS.get(s.as_ref()) {
+                    Value::Symbol(ref symbol) => {
+                        let val = match SPECIAL_FORMS.get(symbol.as_ref()) {
                             Some(special_form) => Value::SpecialForm(special_form.clone()),
-                            None => match env.borrow().get(s) {
+                            None => match env.borrow().get(symbol) {
                                 Some(v) => v,
-                                None => runtime_error!("Identifier not found: {}", s),
+                                None => runtime_error!("Identifier not found: {}", symbol),
                             },
                         };
                         k.run(val)?
@@ -754,24 +833,21 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
 
             // quasiquote Bounce 模式
             // (unquote X) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
-            Trampoline::QuasiBounce(val, env, k) => {
+            Trampoline::QuasiquoteBounce(val, env, k) => {
                 result = match val {
                     Value::List(list) => match list.shift() {
-                        Some((symbol, cdr)) if matches!(&symbol, Value::Symbol(s) if s == "unquote") => Trampoline::Bounce(cdr.unpack1()?, env, k),
-                        Some((car, cdr)) => {
-                            Trampoline::QuasiBounce(car, env.clone(), Continuation::ContinueQuasiquoting(cdr, List::Null, env, Box::new(k)))
-                        }
+                        Some((car, cdr)) => match car {
+                            Value::Symbol(s) if (s == "unquote" || s == "unquote-slicing") => Trampoline::Bounce(cdr.car()?, env, k),
+                            _ => Trampoline::QuasiquoteBounce(car, env.clone(), Continuation::ContinueQuasiquote(cdr, List::Null, env, Box::new(k))),
+                        },
                         None => k.run(null!())?,
                     },
                     _ => k.run(val)?,
                 }
             }
 
-            // Run 不对val 求值，只是将 k 应用到 val 上
-            Trampoline::Run(val, k) => result = k.run(val)?,
-
-            // Land 会返回给的值，应该是最先创建的，也是最后 Trampoline 求值的
-            Trampoline::Land(val) => return Ok(val),
+            Trampoline::Run(val, k) => result = k.run(val)?, // Run 将 k 应用到 val 上
+            Trampoline::Land(val) => return Ok(val),         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
         }
     }
 }
@@ -894,7 +970,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
         "-" => match args.len() {
             0 => runtime_error!("`-` requires at least one argument"),
             1 => {
-                let val: Value = args.unpack1()?; // unpack1(): -> Result<Value, RuntimeError>
+                let val: Value = args.car()?; // unpack1(): -> Result<Value, RuntimeError>
                 -val
                 // why not -args.unpack1()?
             }
@@ -907,7 +983,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
         "/" => match args.len() {
             0 => runtime_error!("`/` requires at least one argument"),
             1 => {
-                match args.unpack1()? {
+                match args.car()? {
                     // unpack1(): -> Result<Value, RuntimeError>
                     Value::Integer(val) => Ok(Value::Float(1.0 / val as f64)),
                     Value::Float(val) => Ok(Value::Float(1.0 / val)),
@@ -924,19 +1000,19 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to <: {:?}", args);
             }
-            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? < r.into_integer()?)))
+            match_list!(args, [l, r] => Value::Boolean(l.into_integer()? < r.into_integer()?))
         }
         ">" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to >: {:?}", args);
             }
-            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? > r.into_integer()?)))
+            match_list!(args, [l, r] => Value::Boolean(l.into_integer()? > r.into_integer()?))
         }
         "=" => {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to =: {:?}", args);
             }
-            match_list!(args, [l, r] => Ok(Value::Boolean(l.into_integer()? == r.into_integer()?)))
+            match_list!(args, [l, r] => Value::Boolean(l.into_integer()? == r.into_integer()?))
         }
         "null?" => {
             if args.len() != 1 {
@@ -944,8 +1020,8 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             }
             match_list!(args, [value] => {
                 match value {
-                    Value::List(l) => Ok(Value::Boolean(l.is_empty())),
-                    _ => Ok(Value::Boolean(false)),
+                    Value::List(l) => Value::Boolean(l.is_empty()),
+                    _ => Value::Boolean(false),
                 }
             })
         }
@@ -955,8 +1031,8 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             }
             match_list!(args, [value] => {
                 match value {
-                    Value::Integer(_) => Ok(Value::Boolean(true)),
-                    _ => Ok(Value::Boolean(false)),
+                    Value::Integer(_) => Value::Boolean(true),
+                    _ => Value::Boolean(false),
                 }
             })
         }
@@ -966,8 +1042,8 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             }
             match_list!(args, [value] => {
                 match value {
-                    Value::Float(_) => Ok(Value::Boolean(true)),
-                    _ => Ok(Value::Boolean(false)),
+                    Value::Float(_) => Value::Boolean(true),
+                    _ => Value::Boolean(false),
                 }
             })
         }
@@ -976,7 +1052,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly two arguments to car: {:?}", args);
             }
-            let l = args.unpack1()?.into_list()?;
+            let l = args.car()?.into_list()?;
             match l.shift() {
                 Some((car, _)) => Ok(car),
                 None => runtime_error!("Can't run car on an empty list"),
@@ -986,7 +1062,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly two arguments to cdr: {:?}", args);
             }
-            let l = args.unpack1()?.into_list()?;
+            let l = args.car()?.into_list()?;
             match l.shift() {
                 Some((_, cdr)) => Ok(cdr.into_list()),
                 None => runtime_error!("Can't run cdr on an empty list"),
@@ -996,7 +1072,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 2 {
                 runtime_error!("Must supply exactly two arguments to cons: {:?}", args);
             }
-            match_list!(args, [elem, list] => Ok(list.into_list()?.unshift(elem).into_list()))
+            match_list!(args, [elem, list] => list.into_list()?.unshift(elem).into_list())
         }
         "append" => {
             if args.len() != 2 {
@@ -1009,21 +1085,21 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
                 for elem in list1.reverse() {
                     list2 = list2.unshift(elem)
                 }
-                Ok(list2.into_list())
+                list2.into_list()
             })
         }
         "error" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to error: {:?}", args);
             }
-            let msg = args.unpack1()?;
+            let msg = args.car()?;
             runtime_error!("{:?}", msg)
         }
         "write" => {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to write: {:?}", args);
             }
-            let val = args.unpack1()?;
+            let val = args.car()?;
             print!("{:?}", val);
             Ok(null!())
         }
@@ -1031,7 +1107,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to display: {:?}", args);
             }
-            let val = args.unpack1()?;
+            let val = args.car()?;
             print!("{}", val);
             Ok(null!())
         }
@@ -1039,7 +1115,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to displayln: {:?}", args);
             }
-            let val = args.unpack1()?;
+            let val = args.car()?;
             println!("{}", val);
             Ok(null!())
         }
@@ -1047,7 +1123,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
             if args.len() != 1 {
                 runtime_error!("Must supply exactly one argument to print: {:?}", args);
             }
-            let val = args.unpack1()?;
+            let val = args.car()?;
             match val {
                 Value::Symbol(_) | Value::List(_) => print!("'{:?}", val),
                 _ => print!("{:?}", val),
@@ -1436,17 +1512,17 @@ fn test_let_bindings() {
 #[test]
 fn test_quoting() {
     // runTest (quote (1 2)) => (1 2)
-    let i = vec![Value::from_vec(vec![
+    let code = vec![Value::from_vec(vec![
         Value::Symbol("quote".to_string()),
         Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]),
     ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
+    assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
 }
 
 #[test]
 fn test_quasiquoting() {
     // runTest (quasiquote (2 (unquote (+ 1 2)) 4)) => (2 3 4)
-    let i = vec![Value::from_vec(vec![
+    let code = vec![Value::from_vec(vec![
         Value::Symbol("quasiquote".to_string()),
         Value::from_vec(vec![
             Value::Integer(2),
@@ -1457,8 +1533,25 @@ fn test_quasiquoting() {
             Value::Integer(4),
         ]),
     ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
+    assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
 }
+
+// #[test]
+// fn test_cps_unquote_slicing() {
+//     // runTest (quasiquote (1 (unquote-slicing (list 2 3)) 4)) => (1 2 3 4)
+//     let i = vec![Value::from_vec(vec![
+//         Value::Symbol("quasiquote".to_string()),
+//         Value::from_vec(vec![
+//             Value::Integer(1),
+//             Value::from_vec(vec![
+//                 Value::Symbol("unquote-slicing".to_string()),
+//                 Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
+//             ]),
+//             Value::Integer(4),
+//         ]),
+//     ])];
+//     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
+// }
 
 #[test]
 fn test_eval() {
