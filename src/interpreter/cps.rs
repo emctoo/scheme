@@ -6,6 +6,8 @@ use std::fmt;
 use std::rc::Rc;
 use std::vec;
 
+use phf::phf_map;
+
 pub fn new() -> Result<Interpreter, RuntimeError> { Interpreter::new() }
 
 #[derive(Clone)]
@@ -703,6 +705,24 @@ fn expand_macro(expr: Value, substitutions: &HashMap<String, Value>) -> Value {
     }
 }
 
+static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
+    "if" => SpecialForm::If,
+    "define" => SpecialForm::Define,
+    "set!" => SpecialForm::Set,
+    "lambda" => SpecialForm::Lambda,
+    "λ" => SpecialForm::Lambda,
+    "let" => SpecialForm::Let,
+    "quote" => SpecialForm::Quote,
+    "quasiquote" => SpecialForm::Quasiquote,
+    "eval" => SpecialForm::Eval,
+    "apply" => SpecialForm::Apply,
+    "begin" => SpecialForm::Begin,
+    "and" => SpecialForm::And,
+    "or" => SpecialForm::Or,
+    "call/cc" => SpecialForm::CallCC,
+    "define-syntax-rule" => SpecialForm::DefineSyntaxRule,
+};
+
 fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
     if exprs.is_empty() {
         return Ok(null!());
@@ -711,8 +731,7 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
     let mut result = eval(exprs, env, Box::new(Continuation::Return))?;
     loop {
         match result {
-            // Bounce is the usual execution path. It's used for pretty much everything.
-            // Special forms are caught here instead of in env so that they can't be redefined in env.
+            // 常规的 Bounce
             Trampoline::Bounce(val, env, k) => {
                 result = match val {
                     Value::List(list) => match list.shift() {
@@ -720,23 +739,9 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                         None => runtime_error!("Can't apply an empty list as a function"),
                     },
                     Value::Symbol(ref s) => {
-                        let val = match s.as_ref() {
-                            "if" => Value::SpecialForm(SpecialForm::If),
-                            "define" => Value::SpecialForm(SpecialForm::Define),
-                            "set!" => Value::SpecialForm(SpecialForm::Set),
-                            "lambda" => Value::SpecialForm(SpecialForm::Lambda),
-                            "λ" => Value::SpecialForm(SpecialForm::Lambda),
-                            "let" => Value::SpecialForm(SpecialForm::Let),
-                            "quote" => Value::SpecialForm(SpecialForm::Quote),
-                            "quasiquote" => Value::SpecialForm(SpecialForm::Quasiquote),
-                            "eval" => Value::SpecialForm(SpecialForm::Eval),
-                            "apply" => Value::SpecialForm(SpecialForm::Apply),
-                            "begin" => Value::SpecialForm(SpecialForm::Begin),
-                            "and" => Value::SpecialForm(SpecialForm::And),
-                            "or" => Value::SpecialForm(SpecialForm::Or),
-                            "call/cc" => Value::SpecialForm(SpecialForm::CallCC),
-                            "define-syntax-rule" => Value::SpecialForm(SpecialForm::DefineSyntaxRule),
-                            _ => match env.borrow().get(s) {
+                        let val = match SPECIAL_FORMS.get(s.as_ref()) {
+                            Some(special_form) => Value::SpecialForm(special_form.clone()),
+                            None => match env.borrow().get(s) {
                                 Some(v) => v,
                                 None => runtime_error!("Identifier not found: {}", s),
                             },
@@ -747,9 +752,8 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                 }
             }
 
-            // QuasiBounce is for quasiquoting mode
-            // it just passes the value right through, UNLESS it's of the form (unquote X), in which case
-            // it switches back to regular evaluating mode using X as the value.
+            // quasiquote Bounce 模式
+            // (unquote X) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
             Trampoline::QuasiBounce(val, env, k) => {
                 result = match val {
                     Value::List(list) => match list.shift() {
@@ -763,12 +767,10 @@ fn process(exprs: List, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeE
                 }
             }
 
-            // Run doesn't evaluate the value, it just runs k with it.
-            // It's similar to running inline, but bounces to avoid growing the stack.
+            // Run 不对val 求值，只是将 k 应用到 val 上
             Trampoline::Run(val, k) => result = k.run(val)?,
 
-            // Land just returns the value.
-            // It should only ever be created at the very beginning of process, and will be the last Trampoline value called.
+            // Land 会返回给的值，应该是最先创建的，也是最后 Trampoline 求值的
             Trampoline::Land(val) => return Ok(val),
         }
     }
