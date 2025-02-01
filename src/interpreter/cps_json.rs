@@ -143,7 +143,7 @@ impl Serialize for Function {
                 let serialized = SerializedFunction::Scheme {
                     args: args.clone(),
                     body: body.clone(),
-                    env: env.borrow().to_serialized(),
+                    env: to_serialized_env(&env.borrow()),
                 };
                 serialized.serialize(serializer)
             }
@@ -273,7 +273,7 @@ pub struct SerializedEnv {
 }
 
 pub fn to_serialized_env(env: &Env) -> SerializedEnv {
-    let parent = env.parent.as_ref().map(|p| Box::new(p.borrow().to_serialized()));
+    let parent = env.parent.as_ref().map(|p| Box::new(to_serialized_env(&p.borrow())));
 
     SerializedEnv {
         values: env.values.clone(),
@@ -374,38 +374,38 @@ pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
     match &**cont {
         Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
             rest: rest.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
         Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
             rest: rest.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
         Cont::EvalFunc(f, rest, acc, env, next) => SerializedCont::EvalFunc {
             f: f.clone(),
             rest: rest.clone(),
             acc: acc.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
             if_expr: if_expr.clone(),
             else_expr: else_expr.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
             name: name.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
             name: name.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
@@ -413,25 +413,25 @@ pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
             name: name.clone(),
             rest: rest.clone(),
             body: body.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
             rest: rest.clone(),
             acc: acc.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::Eval(env, next) => SerializedCont::Eval {
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
             args: args.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
@@ -442,13 +442,13 @@ pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
 
         Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
             rest: rest.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
         Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
             rest: rest.clone(),
-            env: env.borrow().to_serialized(),
+            env: to_serialized_env(&env.borrow()),
             next: Box::new(to_serialized_cont(next)),
         },
 
@@ -501,13 +501,13 @@ impl Serialize for Cont {
         let serialized = match self {
             Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
                 rest: rest.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
                 rest: rest.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
@@ -515,26 +515,26 @@ impl Serialize for Cont {
                 f: f.clone(),
                 rest: rest.clone(),
                 acc: acc.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
                 if_expr: if_expr.clone(),
                 else_expr: else_expr.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
                 name: name.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
                 name: name.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
@@ -542,25 +542,25 @@ impl Serialize for Cont {
                 name: name.clone(),
                 rest: rest.clone(),
                 body: body.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
                 rest: rest.clone(),
                 acc: acc.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::Eval(env, next) => SerializedCont::Eval {
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
                 args: args.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
@@ -571,13 +571,13 @@ impl Serialize for Cont {
 
             Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
                 rest: rest.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
             Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
                 rest: rest.clone(),
-                env: env.borrow().to_serialized(),
+                env: to_serialized_env(&env.borrow()),
                 next: Box::new(to_serialized_cont(next)),
             },
 
@@ -656,7 +656,7 @@ impl Serialize for Trampoline {
             Trampoline::Bounce(val, env, k) => {
                 let serialized = SerializedTrampoline::Bounce {
                     val: val.clone(),
-                    env: env.borrow().to_serialized(),
+                    env: to_serialized_env(&env.borrow()),
                     k: k.clone(),
                 };
                 serialized.serialize(serializer)
@@ -664,7 +664,7 @@ impl Serialize for Trampoline {
             Trampoline::QuasiquoteBounce(val, env, k) => {
                 let serialized = SerializedTrampoline::QuasiquoteBounce {
                     val: val.clone(),
-                    env: env.borrow().to_serialized(),
+                    env: to_serialized_env(&env.borrow()),
                     k: k.clone(),
                 };
                 serialized.serialize(serializer)

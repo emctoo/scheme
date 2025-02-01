@@ -9,7 +9,6 @@ use std::vec;
 use phf::phf_map;
 use serde::{Deserialize, Serialize};
 
-use crate::interpreter::cps_json::SerializedEnv;
 use crate::match_list;
 
 #[derive(Debug)]
@@ -986,26 +985,6 @@ impl Env {
             None => env_ref.clone(),
         }
     }
-
-    pub fn to_serialized(&self) -> SerializedEnv {
-        let parent = self.parent.as_ref().map(|p| Box::new(p.borrow().to_serialized()));
-
-        SerializedEnv {
-            values: self.values.clone(),
-            parent,
-        }
-    }
-
-    // pub fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
-    //     let parent = serialized.parent.map(|p| Env::from_serialized(*p));
-    //
-    //     let env = Env {
-    //         values: serialized.values,
-    //         parent,
-    //     };
-    //
-    //     Rc::new(RefCell::new(env))
-    // }
 }
 
 fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
