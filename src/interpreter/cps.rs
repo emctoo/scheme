@@ -597,8 +597,6 @@ fn cont_eval_expr(val: Value, expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -
 
 impl Cont {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
-        info!("Running continuation {:?} with value {:?}", self, val);
-
         match self {
             Cont::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
 
@@ -620,155 +618,6 @@ impl Cont {
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
             Cont::Return => Ok(Trampoline::Land(val)),
-        }
-    }
-
-    pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
-        match &**cont {
-            Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalFunc(f, rest, acc, env, next) => SerializedCont::EvalFunc {
-                f: f.clone(),
-                rest: rest.clone(),
-                acc: acc.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
-                if_expr: if_expr.clone(),
-                else_expr: else_expr.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
-                name: name.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
-                name: name.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalLet(name, rest, body, env, next) => SerializedCont::EvalLet {
-                name: name.clone(),
-                rest: rest.clone(),
-                body: body.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
-                rest: rest.clone(),
-                acc: acc.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Eval(env, next) => SerializedCont::Eval {
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
-                args: args.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Apply(f, next) => SerializedCont::Apply {
-                f: f.clone(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::ExecCallCC(next) => SerializedCont::ExecCallCC {
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Return => SerializedCont::Return,
-        }
-    }
-
-    pub fn from_serialized_cont(serialized: SerializedCont) -> Self {
-        match serialized {
-            SerializedCont::EvalExpr { rest, env, next } => {
-                Cont::EvalExpr(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::BeginFunc { rest, env, next } => {
-                Cont::BeginFunc(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::EvalFunc { f, rest, acc, env, next } => {
-                Cont::EvalFunc(f, rest, acc, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::EvalIf {
-                if_expr,
-                else_expr,
-                env,
-                next,
-            } => Cont::EvalIf(if_expr, else_expr, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
-
-            SerializedCont::EvalDef { name, env, next } => {
-                Cont::EvalDef(name, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::EvalSet { name, env, next } => {
-                Cont::EvalSet(name, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::EvalLet { name, rest, body, env, next } => {
-                Cont::EvalLet(name, rest, body, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::ContinueQuasiquote { rest, acc, env, next } => {
-                Cont::ContinueQuasiquote(rest, acc, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::Eval { env, next } => Cont::Eval(Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
-
-            SerializedCont::EvalApplyArgs { args, env, next } => {
-                Cont::EvalApplyArgs(args, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::Apply { f, next } => Cont::Apply(f, Box::new(Self::from_serialized_cont(*next))),
-
-            SerializedCont::EvalAnd { rest, env, next } => {
-                Cont::EvalAnd(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
-            }
-
-            SerializedCont::EvalOr { rest, env, next } => Cont::EvalOr(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
-
-            SerializedCont::ExecCallCC { next } => Cont::ExecCallCC(Box::new(Self::from_serialized_cont(*next))),
-
-            SerializedCont::Return => Cont::Return,
         }
     }
 }
@@ -830,58 +679,37 @@ static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
 };
 
 fn process(exprs: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
-    info!("Starting process with expressions: {:?}", exprs);
-
     if exprs.is_empty() {
-        info!("Empty expressions, returning null");
         return Ok(null!());
     }
 
     let mut result = eval(exprs, env, Box::new(Cont::Return))?;
-    info!("Initial evaluation result: {:?}", result);
-
     loop {
         match result {
             // 常规的 Bounce
             Trampoline::Bounce(val, env, k) => {
-                info!("Bounce: Processing value {:?}", val);
-
                 result = match val {
-                    Value::List(list) => {
-                        info!("Processing list: {:?}", list);
-                        match list.shift() {
-                            Some((car, cdr)) => {
-                                info!("List car: {:?}, cdr: {:?}", car, cdr);
-                                Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))
-                            }
-                            None => {
-                                info!("Empty list application error");
-                                runtime_error!("Can't apply an empty list as a function")
-                            }
-                        }
-                    }
+                    Value::List(list) => match list.shift() {
+                        Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))),
+                        None => runtime_error!("Can't apply an empty list as a function"),
+                    },
                     Value::Symbol(ref s) => {
-                        info!("Processing symbol: {}", s);
-                        k.run(
-                            // 先从 special form 找，然后是env 中的各种定义
-                            SPECIAL_FORMS
-                                .get(s.as_ref())
-                                .map(|sf| Value::SpecialForm(sf.clone()))
-                                .or_else(|| env.borrow().get(s))
-                                .ok_or_else(|| RuntimeError {
-                                    message: format!("Identifier not found: {}", s),
-                                })?,
-                        )?
+                        // 先从 special form 找，然后是env 中的各种定义
+                        let val = SPECIAL_FORMS
+                            .get(s.as_ref())
+                            .map(|sf| Value::SpecialForm(sf.clone()))
+                            .or_else(|| env.borrow().get(s))
+                            .ok_or_else(|| RuntimeError {
+                                message: format!("Identifier not found: {}", s),
+                            })?;
+                        k.run(val)?
                     }
-                    _ => {
-                        info!("Processing other value: {:?}", val);
-                        k.run(val)? // 其他的所有形式
-                    }
+                    _ => k.run(val)?, // 其他的所有形式
                 }
             }
 
             // quasiquote Bounce 模式
-            // (unquote X) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
+            // (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
             Trampoline::QuasiquoteBounce(val, env, k) => {
                 result = match val {
                     Value::List(list) => match list.shift() {
@@ -957,6 +785,7 @@ mod test_trampoline {
         let result = process(code, env).unwrap();
         assert_eq!(result, Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
     }
+
     #[test]
     fn test_nested_quasiquote() {
         // 测试嵌套的 quasiquote 和 unquote
