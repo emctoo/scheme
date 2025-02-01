@@ -33,7 +33,7 @@ impl Interpreter {
         Ok(Interpreter { root: env })
     }
 
-    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> { process(List::from_nodes(nodes), self.root.clone()) }
+    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> { eval_cps(List::from_nodes(nodes), self.root.clone()) }
 }
 
 macro_rules! runtime_error {
@@ -689,7 +689,7 @@ static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
     "define-syntax-rule" => SpecialForm::DefineSyntaxRule,
 };
 
-fn process(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
+fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     if expr.is_empty() {
         return Ok(null!());
     }
@@ -697,29 +697,25 @@ fn process(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
     loop {
         match result {
-            // 常规的 Bounce
-            Trampoline::Bounce(val, env, k) => {
-                result = handle_bounce_val(val, env, k)?;
-            }
-
-            // quasiquote Bounce 模式
-            // (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
-            Trampoline::QuasiquoteBounce(val, env, k) => {
-                result = match val {
-                    Value::List(list) => match list.shift() {
-                        Some((car, cdr)) => match car {
-                            Value::Symbol(s) if s == "unquote" => Trampoline::Bounce(cdr.car()?, env, k),
-                            _ => Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, List::Null, env, Box::new(k))),
-                        },
-                        None => k.run(null!())?,
-                    },
-                    _ => k.run(val)?,
-                }
-            }
-
-            Trampoline::Run(val, k) => result = k.run(val)?, // Run 将 k 应用到 val 上
-            Trampoline::Land(val) => return Ok(val),         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
+            Trampoline::Bounce(val, env, k) => result = handle_bounce_val(val, env, k)?, // 常规的 Bounce
+            Trampoline::QuasiquoteBounce(val, env, k) => result = handle_quasiquote_bounce(val, env, k)?, // quasiquote Bounce 模式
+            Trampoline::Run(val, k) => result = k.run(val)?,                             // Run 将 k 应用到 val 上
+            Trampoline::Land(val) => return Ok(val),                                     // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
         }
+    }
+}
+
+// (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
+fn handle_quasiquote_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::List(list) => match list.shift() {
+            Some((car, cdr)) => match car {
+                Value::Symbol(s) if s == "unquote" => Ok(Trampoline::Bounce(cdr.car()?, env, k)),
+                _ => Ok(Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, List::Null, env, Box::new(k)))),
+            },
+            None => k.run(null!()),
+        },
+        _ => k.run(val),
     }
 }
 
@@ -768,6 +764,144 @@ mod test_trampoline {
         env.borrow_mut().define("x".into(), Value::Integer(42)).unwrap();
         env.borrow_mut().define("y".into(), Value::Integer(10)).unwrap();
         env
+    }
+
+    #[test]
+    fn test_handle_simple_value() {
+        // 测试简单值（非列表）
+        let env = setup_env();
+        let result = handle_quasiquote_bounce(Value::Integer(42), env, Cont::Return).unwrap();
+
+        // 对于简单值，应该直接返回 Trampoline::Land
+        match result {
+            Trampoline::Land(Value::Integer(42)) => (),
+            _ => panic!("Expected Land(42), got {:?}", result),
+        }
+    }
+
+    // #[test]
+    // fn test_handle_empty_list() {
+    //     // 测试空列表
+    //     let env = setup_env();
+    //     let result = handle_quasiquote_bounce(Value::List(List::Null), env, Cont::Return).unwrap();
+
+    //     // 空列表应该返回 null
+    //     match result {
+    //         Trampoline::Land(Value::List(list)) if list.is_empty() => (),
+    //         _ => panic!("Expected Land(null), got {:?}", result),
+    //     }
+    // }
+
+    #[test]
+    fn test_handle_unquote() {
+        // 测试 unquote 形式: (unquote expr)
+        let env = setup_env();
+        let list = List::from_vec(vec![Value::Symbol("unquote".to_string()), Value::Integer(42)]);
+
+        let result = handle_quasiquote_bounce(Value::List(list), env.clone(), Cont::Return).unwrap();
+
+        // unquote 应该触发 Bounce
+        match result {
+            Trampoline::Bounce(Value::Integer(42), env2, Cont::Return) => {
+                assert_eq!(env2, env);
+            }
+            _ => panic!("Expected Bounce with unquote expression, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_handle_nested_list() {
+        // 测试嵌套列表: (a b c)
+        let env = setup_env();
+        let list = List::from_vec(vec![
+            Value::Symbol("a".to_string()),
+            Value::Symbol("b".to_string()),
+            Value::Symbol("c".to_string()),
+        ]);
+
+        let result = handle_quasiquote_bounce(Value::List(list), env.clone(), Cont::Return).unwrap();
+
+        // 应该继续 QuasiquoteBounce 处理
+        match result {
+            Trampoline::QuasiquoteBounce(Value::Symbol(s), env2, Cont::ContinueQuasiquote(rest, acc, env3, k)) => {
+                assert_eq!(s, "a");
+                assert_eq!(env2, env);
+                assert_eq!(env3, env);
+                assert_eq!(acc, List::Null);
+                // rest 应该包含 (b c)
+                assert_eq!(rest, List::from_vec(vec![Value::Symbol("b".to_string()), Value::Symbol("c".to_string()),]));
+                match *k {
+                    Cont::Return => (),
+                    _ => panic!("Expected Return continuation"),
+                }
+            }
+            _ => panic!("Expected QuasiquoteBounce, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_handle_unquote_with_complex_expr() {
+        // 测试带有复杂表达式的 unquote: (unquote (+ 1 2))
+        let env = setup_env();
+        let list = List::from_vec(vec![
+            Value::Symbol("unquote".to_string()),
+            Value::List(List::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)])),
+        ]);
+
+        let result = handle_quasiquote_bounce(Value::List(list), env.clone(), Cont::Return).unwrap();
+
+        // 应该返回 Bounce 来计算 (+ 1 2)
+        match result {
+            Trampoline::Bounce(Value::List(expr), env2, Cont::Return) => {
+                assert_eq!(env2, env);
+                assert_eq!(expr, List::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2),]));
+            }
+            _ => panic!("Expected Bounce with complex unquote expression, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_handle_symbol() {
+        // 测试单个符号
+        let env = setup_env();
+        let result = handle_quasiquote_bounce(Value::Symbol("x".to_string()), env, Cont::Return).unwrap();
+
+        // 符号应该直接返回
+        match result {
+            Trampoline::Land(Value::Symbol(s)) => assert_eq!(s, "x"),
+            _ => panic!("Expected Land with symbol, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_handle_mixed_list() {
+        // 测试混合列表: (a ,(+ 1 2) c)
+        let env = setup_env();
+        let list = List::from_vec(vec![
+            Value::Symbol("a".to_string()),
+            Value::List(List::from_vec(vec![
+                Value::Symbol("unquote".to_string()),
+                Value::List(List::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)])),
+            ])),
+            Value::Symbol("c".to_string()),
+        ]);
+
+        let result = handle_quasiquote_bounce(Value::List(list), env.clone(), Cont::Return).unwrap();
+
+        // 应该首先处理第一个元素 'a'
+        match result {
+            Trampoline::QuasiquoteBounce(Value::Symbol(s), env2, Cont::ContinueQuasiquote(rest, acc, env3, k)) => {
+                assert_eq!(s, "a");
+                assert_eq!(env2, env);
+                assert_eq!(env3, env);
+                assert_eq!(acc, List::Null);
+                match *k {
+                    Cont::Return => (),
+                    _ => panic!("Expected Return continuation"),
+                }
+            }
+            _ => panic!("Expected QuasiquoteBounce with mixed list, got {:?}", result),
+        }
     }
 
     #[test]
@@ -952,7 +1086,7 @@ mod test_trampoline {
         // 7. Return(3) - 返回最终结果
         let code = parse_list("(+ 1 2)");
         let env = Env::new_root().unwrap();
-        let result = process(code, env).unwrap();
+        let result = eval_cps(code, env).unwrap();
         assert_eq!(result, Value::Integer(3));
     }
 
@@ -962,7 +1096,7 @@ mod test_trampoline {
         // `(1 2 3)
         let code = parse_list("`(1 2 3)");
         let env = Env::new_root().unwrap();
-        let result = process(code, env).unwrap();
+        let result = eval_cps(code, env).unwrap();
 
         let expected = Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
 
@@ -980,7 +1114,7 @@ mod test_trampoline {
         // 5. Return((2 3 4)) - 返回完整列表
         let code = parse_list("`(2 ,(+ 1 2) 4)");
         let env = Env::new_root().unwrap();
-        let result = process(code, env).unwrap();
+        let result = eval_cps(code, env).unwrap();
         assert_eq!(result, Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
     }
 
@@ -992,7 +1126,7 @@ mod test_trampoline {
         // 但内层的 unquote 会被求值
         let code = parse_list("`(1 `(2 ,(+ 1 2) ,(+ 3 4)) 5)");
         let env = Env::new_root().unwrap();
-        let result = process(code, env).unwrap();
+        let result = eval_cps(code, env).unwrap();
 
         // 期待结果: (1 (quasiquote (2 3 7)) 5)
         // 注意: 在外层 quasiquote 中，(+ 1 2) 和 (+ 3 4) 会被求值
@@ -1038,7 +1172,7 @@ mod test_trampoline {
         // 这是最简单的情况,比如字面量
         let code = parse_list("42");
         let env = Env::new_root().unwrap();
-        let result = process(code, env).unwrap();
+        let result = eval_cps(code, env).unwrap();
         assert_eq!(result, Value::Integer(42));
     }
 
@@ -1355,7 +1489,7 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
 mod test_cps {
     use super::*;
 
-    fn exec(list: List) -> Result<Value, RuntimeError> { process(list, Env::new_root()?) }
+    fn exec(list: List) -> Result<Value, RuntimeError> { eval_cps(list, Env::new_root()?) }
 
     #[test]
     fn test_add1() {
