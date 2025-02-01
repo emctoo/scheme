@@ -1026,6 +1026,101 @@ impl fmt::Debug for Trampoline {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+enum SerializedTrampoline {
+    Bounce { val: Value, env: SerializedEnv, k: Cont },
+    QuasiquoteBounce { val: Value, env: SerializedEnv, k: Cont },
+    Run { val: Value, k: Cont },
+    Land { val: Value },
+}
+
+impl Serialize for Trampoline {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Trampoline::Bounce(val, env, k) => {
+                let serialized = SerializedTrampoline::Bounce {
+                    val: val.clone(),
+                    env: env.borrow().to_serialized(),
+                    k: k.clone(),
+                };
+                serialized.serialize(serializer)
+            }
+            Trampoline::QuasiquoteBounce(val, env, k) => {
+                let serialized = SerializedTrampoline::QuasiquoteBounce {
+                    val: val.clone(),
+                    env: env.borrow().to_serialized(),
+                    k: k.clone(),
+                };
+                serialized.serialize(serializer)
+            }
+            Trampoline::Run(val, k) => {
+                let serialized = SerializedTrampoline::Run {
+                    val: val.clone(),
+                    k: k.clone(),
+                };
+                serialized.serialize(serializer)
+            }
+            Trampoline::Land(val) => {
+                let serialized = SerializedTrampoline::Land { val: val.clone() };
+                serialized.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Trampoline {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let serialized = SerializedTrampoline::deserialize(deserializer)?;
+
+        Ok(match serialized {
+            SerializedTrampoline::Bounce { val, env, k } => Trampoline::Bounce(val, Env::from_serialized(env), k),
+            SerializedTrampoline::QuasiquoteBounce { val, env, k } => Trampoline::QuasiquoteBounce(val, Env::from_serialized(env), k),
+            SerializedTrampoline::Run { val, k } => Trampoline::Run(val, k),
+            SerializedTrampoline::Land { val } => Trampoline::Land(val),
+        })
+    }
+}
+
+#[cfg(test)]
+mod test_trampoline_serialization {
+    use super::*;
+
+    #[test]
+    fn test_serialize_land() {
+        let t = Trampoline::Land(Value::Integer(42));
+        let serialized = serde_json::to_string(&t).unwrap();
+        let deserialized: Trampoline = serde_json::from_str(&serialized).unwrap();
+
+        match deserialized {
+            Trampoline::Land(Value::Integer(n)) => assert_eq!(n, 42),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_serialize_run() {
+        let env = Env::new_root().unwrap();
+        let t = Trampoline::Run(Value::Integer(1), Cont::Return);
+
+        let serialized = serde_json::to_string(&t).unwrap();
+        let deserialized: Trampoline = serde_json::from_str(&serialized).unwrap();
+
+        match deserialized {
+            Trampoline::Run(Value::Integer(n), Cont::Return) => {
+                assert_eq!(n, 1);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+}
+
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match_list!(rest, [defn, body] => {
         let (name, arg_names_raw) = match defn.into_list()?.shift() {
