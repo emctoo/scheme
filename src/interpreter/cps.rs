@@ -352,6 +352,7 @@ pub enum Cont {
     Return,
 }
 
+#[derive(PartialEq, Clone)]
 pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
@@ -496,12 +497,6 @@ fn cont_eval_let(name: String, value: Value, rest: List, body: List, env: Rc<Ref
     }
 }
 
-fn cont_special_if(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, [condition, if_expr, else_expr] => {
-        Trampoline::Bounce(condition, env.clone(), Cont::EvalIf(if_expr, else_expr, env, k))
-    })
-}
-
 fn cont_eval_if(val: Value, if_expr: Value, else_expr: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
@@ -581,7 +576,9 @@ fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> 
 
 fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match sf {
-        SpecialForm::If => cont_special_if(rest, env, k),
+        SpecialForm::If => match_list!(rest, [condition, if_expr, else_expr] => {
+            Trampoline::Bounce(condition, env.clone(), Cont::EvalIf(if_expr, else_expr, env, k))
+        }),
         SpecialForm::Define => cont_special_def(rest, env, k),
         SpecialForm::Set => cont_special_set(rest, env, k),
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
@@ -702,24 +699,7 @@ fn process(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
         match result {
             // 常规的 Bounce
             Trampoline::Bounce(val, env, k) => {
-                result = match val {
-                    Value::List(list) => match list.shift() {
-                        Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))),
-                        None => runtime_error!("Can't apply an empty list as a function"),
-                    },
-                    Value::Symbol(ref s) => {
-                        // 先从 special form 找，然后是env 中的各种定义
-                        let val = SPECIAL_FORMS
-                            .get(s.as_ref())
-                            .map(|sf| Value::SpecialForm(sf.clone()))
-                            .or_else(|| env.borrow().get(s))
-                            .ok_or_else(|| RuntimeError {
-                                message: format!("Identifier not found: {}", s),
-                            })?;
-                        k.run(val)?
-                    }
-                    _ => k.run(val)?, // 其他的所有形式
-                }
+                result = handle_bounce_val(val, env, k)?;
             }
 
             // quasiquote Bounce 模式
@@ -743,6 +723,34 @@ fn process(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     }
 }
 
+fn handle_bounce_list(list: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+    match list.shift() {
+        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))),
+        None => runtime_error!("Can't apply an empty list as a function"),
+    }
+}
+
+fn handle_bounce_symbol(s: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+    // 先从 special form 找，然后是env 中的各种定义
+    let val: Value = SPECIAL_FORMS
+        .get(s.as_ref())
+        .map(|sf| Value::SpecialForm(sf.clone()))
+        .or_else(|| env.borrow().get(s))
+        .ok_or_else(|| RuntimeError {
+            message: format!("Identifier not found: {}", s),
+        })?;
+    // if => Value::SpecialForm(SpecialForm::If)
+    k.run(val)
+}
+
+fn handle_bounce_val(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::List(list) => handle_bounce_list(list, env, k),   // 处理列表形式
+        Value::Symbol(ref s) => handle_bounce_symbol(s, env, k), // 处理符号形式
+        _ => k.run(val),                                         // 处理其他所有形式
+    }
+}
+
 #[cfg(test)]
 mod test_trampoline {
     use super::*;
@@ -753,6 +761,182 @@ mod test_trampoline {
         let tokens = lexer::tokenize(code).unwrap();
         let nodes = parser::parse(&tokens).unwrap();
         List::from_nodes(&nodes)
+    }
+
+    fn setup_env() -> Rc<RefCell<Env>> {
+        let env = Env::new_root().unwrap();
+        env.borrow_mut().define("x".into(), Value::Integer(42)).unwrap();
+        env.borrow_mut().define("y".into(), Value::Integer(10)).unwrap();
+        env
+    }
+
+    #[test]
+    fn test_handle_empty_list() {
+        let env = setup_env();
+        let k = Cont::Return;
+        let val = Value::List(List::Null);
+
+        let result = handle_bounce_val(val, env, k);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().message, "Can't apply an empty list as a function");
+    }
+
+    #[test]
+    fn test_handle_non_empty_list() {
+        let env = setup_env();
+        let k = Cont::Return;
+
+        // 构造列表 (+ 1 2)
+        let val = Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]);
+
+        let result = handle_bounce_val(val, env.clone(), k).unwrap();
+        match result {
+            Trampoline::Bounce(car, env2, Cont::BeginFunc(cdr, env3, _)) => {
+                assert_eq!(car, Value::Symbol("+".to_string()));
+                assert_eq!(env2, env);
+                assert_eq!(env3, env);
+                assert_eq!(cdr, List::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
+            }
+            _ => panic!("Expected Bounce with BeginFunc continuation"),
+        }
+    }
+
+    #[test]
+    fn test_handle_special_form() {
+        let env = setup_env();
+        let k = Cont::Return;
+        let val = Value::Symbol("if".to_string());
+
+        let result = handle_bounce_val(val, env, k).unwrap();
+        match result {
+            // 当使用 Return continuation 时，会直接得到 Land
+            Trampoline::Land(Value::SpecialForm(SpecialForm::If)) => (),
+            _ => panic!("Expected Land with SpecialForm::If"),
+        }
+    }
+
+    #[test]
+    fn test_handle_special_form_non_return() {
+        let env = setup_env();
+
+        // (if #t 1 2)
+        let args = List::from_vec(vec![Value::Boolean(true), Value::Integer(1), Value::Integer(2)]);
+
+        let k = Cont::BeginFunc(args, env.clone(), Box::new(Cont::Return));
+        // let val = Value::Symbol("if".to_string());
+
+        let result = handle_bounce_symbol(&"if".to_string(), env.clone(), k).unwrap();
+        match &result {
+            Trampoline::Bounce(val, env1, Cont::EvalIf(if_expr, else_expr, env2, k)) => {
+                // 验证各个部分是否正确
+                assert_eq!(*val, Value::Boolean(true)); // 条件部分
+                assert_eq!(*if_expr, Value::Integer(1)); // if 分支
+                assert_eq!(*else_expr, Value::Integer(2)); // else 分支
+                assert_eq!(env1, &env); // 环境相同
+                assert_eq!(env2, &env); // 环境相同
+                match **k {
+                    Cont::Return => (), // 验证最内层的 continuation 是 Return
+                    _ => panic!("Expected Return continuation"),
+                }
+            }
+            _ => panic!("Expected Run with SpecialForm::If and BeginFunc continuation, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_handle_special_form_complete_if() {
+        let env = setup_env();
+
+        // 构造完整的 if 表达式: (if #t 1 2)
+        let if_expr = Value::List(List::from_vec(vec![
+            Value::Symbol("if".to_string()),
+            Value::Boolean(true),
+            Value::Integer(1),
+            Value::Integer(2),
+        ]));
+
+        let result = handle_bounce_val(if_expr, env.clone(), Cont::Return).unwrap();
+
+        // 验证第一步的结果是否正确
+        match result {
+            Trampoline::Bounce(val, _bounce_env, k) => {
+                assert_eq!(val, Value::Symbol("if".to_string()));
+
+                // 验证 continuation 中的参数列表
+                match k {
+                    Cont::BeginFunc(args, _, _) => {
+                        assert_eq!(args, List::from_vec(vec![Value::Boolean(true), Value::Integer(1), Value::Integer(2)]));
+                    }
+                    _ => panic!("Expected BeginFunc continuation"),
+                }
+            }
+            _ => panic!("Expected Bounce with if symbol"),
+        }
+    }
+
+    // 添加一个测试验证特殊形式的基本识别
+    #[test]
+    fn test_special_form_identification() {
+        let env = setup_env();
+        let special_forms = vec!["if", "define", "lambda", "begin"];
+
+        for form in special_forms {
+            let val = Value::Symbol(form.to_string());
+            let result = handle_bounce_val(val.clone(), env.clone(), Cont::Return).unwrap();
+
+            match result {
+                Trampoline::Land(Value::SpecialForm(_)) => (),
+                _ => panic!("Expected Land with SpecialForm for {}", form),
+            }
+        }
+    }
+
+    #[test]
+    fn test_handle_defined_symbol() {
+        let env = setup_env();
+        let k = Cont::Return;
+        let val = Value::Symbol("x".to_string());
+
+        let result = handle_bounce_val(val, env, k).unwrap();
+        // Return continuation 会直接得到 Land
+        match result {
+            Trampoline::Land(Value::Integer(42)) => (),
+            _ => panic!("Expected Land with Value::Integer(42)"),
+        }
+    }
+
+    #[test]
+    fn test_handle_undefined_symbol() {
+        let env = setup_env();
+        let k = Cont::Return;
+        let val = Value::Symbol("undefined".to_string());
+
+        let result = handle_bounce_val(val, env, k);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().message, "Identifier not found: undefined");
+    }
+
+    #[test]
+    fn test_handle_literal() {
+        let env = setup_env();
+        let k = Cont::Return;
+        let val = Value::Integer(5);
+
+        let result = handle_bounce_val(val, env, k).unwrap();
+        // Return continuation 会直接得到 Land
+        match result {
+            Trampoline::Land(Value::Integer(5)) => (),
+            _ => panic!("Expected Land with Value::Integer(5)"),
+        }
+    }
+
+    #[test]
+    fn test_return() {
+        // test the return trampoline
+        let _env = Env::new_root().unwrap();
+        let k = Cont::Return;
+        let result = k.run(Value::Integer(42)).unwrap();
+        assert_eq!(result, Trampoline::Land(Value::Integer(42)));
     }
 
     #[test]
