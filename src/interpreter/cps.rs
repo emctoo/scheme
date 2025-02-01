@@ -203,11 +203,84 @@ pub enum Function {
     Native(&'static str),
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+enum SerializedFunction {
+    Scheme { args: Vec<String>, body: List, env: SerializedEnv },
+    Native(String),
+}
+
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Function::Scheme(_, _, _) => write!(f, "#<procedure>"),
             Function::Native(ref s) => write!(f, "#<procedure:{}>", s),
+        }
+    }
+}
+
+const NATIVE_FUNCTIONS: &[&'static str] = &[
+    "+",
+    "-",
+    "*",
+    "/",
+    "<",
+    ">",
+    "=",
+    "null?",
+    "integer?",
+    "float?",
+    "list",
+    "car",
+    "cdr",
+    "cons",
+    "append",
+    "error",
+    "write",
+    "display",
+    "displayln",
+    "print",
+    "newline",
+];
+
+impl Serialize for Function {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Function::Scheme(args, body, env) => {
+                let serialized = SerializedFunction::Scheme {
+                    args: args.clone(),
+                    body: body.clone(),
+                    env: env.borrow().to_serialized(),
+                };
+                serialized.serialize(serializer)
+            }
+            Function::Native(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Function {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let serialized = SerializedFunction::deserialize(deserializer)?;
+        match serialized {
+            SerializedFunction::Scheme { args, body, env } => {
+                let env = Env::from_serialized(env);
+                Ok(Function::Scheme(args, body, env))
+            }
+            SerializedFunction::Native(name) => {
+                // 通过字符串查找对应的静态字符串
+                let static_name = NATIVE_FUNCTIONS.iter()
+                    .find(|&&func_name| func_name == name.as_str())
+                    .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;
+
+                Ok(Function::Native(static_name))
+            }
         }
     }
 }
@@ -1165,6 +1238,12 @@ pub struct Env {
     values: HashMap<String, Value>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializedEnv {
+    parent: Option<Box<SerializedEnv>>,
+    values: HashMap<String, Value>,
+}
+
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.parent {
@@ -1267,6 +1346,26 @@ impl Env {
             Some(ref parent) => Env::get_root(parent.clone()),
             None => env_ref.clone(),
         }
+    }
+
+    fn to_serialized(&self) -> SerializedEnv {
+        let parent = self.parent.as_ref().map(|p| Box::new(p.borrow().to_serialized()));
+
+        SerializedEnv {
+            values: self.values.clone(),
+            parent,
+        }
+    }
+
+    fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
+        let parent = serialized.parent.map(|p| Env::from_serialized(*p));
+
+        let env = Env {
+            values: serialized.values,
+            parent,
+        };
+
+        Rc::new(RefCell::new(env))
     }
 }
 
