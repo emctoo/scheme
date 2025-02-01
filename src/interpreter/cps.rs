@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::vec;
 
 use phf::phf_map;
+use tracing::info;
 
 pub fn new() -> Result<Interpreter, RuntimeError> { Interpreter::new() }
 

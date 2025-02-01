@@ -1,25 +1,52 @@
-use clap::{Arg, Command};
+use clap::{Arg, Command, Parser};
 use reedline::{DefaultPrompt, DefaultPromptSegment, FileBackedHistory, Reedline, Signal};
 use scheme::interpreter::interpreter::{self};
 use std::{fs::File, io::Read, path::Path};
 
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+use tracing::{info};
+
+#[derive(Parser)]
+#[command(name = "Scheme", about = "A Scheme interpreter")]
+struct Args {
+    /// Interpreter mode: ast-walk or cps
+    #[arg(short, long, value_parser = ["ast-walk", "cps"], default_value = "cps")]
+    mode: String,
+
+    /// Input file (optional)
+    file: Option<String>,
+
+    /// Log file path
+    #[arg(short, long, default_value = "scheme.log")]
+    log_file: String,
+}
+
 fn main() {
-    let matches = Command::new("Scheme")
-        .arg(
-            Arg::new("mode")
-                .short('m')
-                .long("mode")
-                .help("interpreter mode")
-                .value_parser(["ast-walk", "cps"])
-                .default_value("cps"),
-        )
-        .arg(Arg::new("file").help("Input file").num_args(0..=1))
-        .get_matches();
+    let args = Args::parse();
 
-    let interpreter_mode = matches.get_one::<String>("mode").unwrap();
-    let interpreter = interpreter::new(interpreter_mode);
+    // Setup logging
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, "", &args.log_file);
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_writer(file_appender)
+        .with_ansi(false);
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer)
+        .init();
 
-    match matches.get_one::<String>("file") {
+    info!("Starting Scheme interpreter");
+
+    let interpreter = interpreter::new(&args.mode);
+
+    match args.file {
         Some(filename) => {
             let path = Path::new(&filename);
             let mut file = File::open(path).unwrap();

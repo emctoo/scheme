@@ -10,3 +10,7 @@ edition = "2021"
 clap = { version = "4.5", features = ["derive", "env"] }
 reedline = { version = "0.38" }
 phf = { version = "0.11", features = ["macros"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"

@@ -12,9 +12,7 @@ macro_rules! try_or_return_error {
     };
 }
 
-pub fn new(t: &str) -> Interpreter {
-    Interpreter::new(t)
-}
+pub fn new(t: &str) -> Interpreter { Interpreter::new(t) }
 
 pub enum Interpreter {
     AstWalk(ast_walk::Interpreter),
