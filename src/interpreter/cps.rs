@@ -53,15 +53,9 @@ pub enum Value {
     String(String),
 
     List(List),
-
-    #[serde(skip)]
     Procedure(Function),
-
-    #[serde(skip)]
     SpecialForm(SpecialForm),
-
     Macro(Vec<String>, Box<Value>),
-
     #[serde(skip)]
     Continuation(Box<Cont>),
 }
@@ -275,7 +269,8 @@ impl<'de> Deserialize<'de> for Function {
             }
             SerializedFunction::Native(name) => {
                 // 通过字符串查找对应的静态字符串
-                let static_name = NATIVE_FUNCTIONS.iter()
+                let static_name = NATIVE_FUNCTIONS
+                    .iter()
                     .find(|&&func_name| func_name == name.as_str())
                     .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;
 
@@ -285,7 +280,9 @@ impl<'de> Deserialize<'de> for Function {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug,  Serialize, Deserialize)]
+#[serde(into = "String")]
+#[serde(try_from = "String")]
 pub enum SpecialForm {
     If,
     Define,
@@ -301,6 +298,98 @@ pub enum SpecialForm {
     Or,
     CallCC,
     DefineSyntaxRule,
+}
+
+impl From<SpecialForm> for String {
+    fn from(sf: SpecialForm) -> String {
+        match sf {
+            SpecialForm::If => "if".to_string(),
+            SpecialForm::Define => "define".to_string(),
+            SpecialForm::Set => "set!".to_string(),
+            SpecialForm::Lambda => "lambda".to_string(),
+            SpecialForm::Let => "let".to_string(),
+            SpecialForm::Quote => "quote".to_string(),
+            SpecialForm::Quasiquote => "quasiquote".to_string(),
+            SpecialForm::Eval => "eval".to_string(),
+            SpecialForm::Apply => "apply".to_string(),
+            SpecialForm::Begin => "begin".to_string(),
+            SpecialForm::And => "and".to_string(),
+            SpecialForm::Or => "or".to_string(),
+            SpecialForm::CallCC => "call/cc".to_string(),
+            SpecialForm::DefineSyntaxRule => "define-syntax-rule".to_string(),
+        }
+    }
+}
+
+impl TryFrom<String> for SpecialForm {
+    type Error = serde::de::value::Error;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "if" => Ok(SpecialForm::If),
+            "define" => Ok(SpecialForm::Define),
+            "set!" => Ok(SpecialForm::Set),
+            "lambda" => Ok(SpecialForm::Lambda),
+            "let" => Ok(SpecialForm::Let),
+            "quote" => Ok(SpecialForm::Quote),
+            "quasiquote" => Ok(SpecialForm::Quasiquote),
+            "eval" => Ok(SpecialForm::Eval),
+            "apply" => Ok(SpecialForm::Apply),
+            "begin" => Ok(SpecialForm::Begin),
+            "and" => Ok(SpecialForm::And),
+            "or" => Ok(SpecialForm::Or),
+            "call/cc" => Ok(SpecialForm::CallCC),
+            "define-syntax-rule" => Ok(SpecialForm::DefineSyntaxRule),
+            _ => Err(serde::de::Error::custom(format!("Invalid special form: {}", s))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_special_form_serialization {
+    use super::*;
+
+    #[test]
+    fn test_special_form_serialization() {
+        let sf = SpecialForm::Lambda;
+        let serialized = serde_json::to_string(&sf).unwrap();
+        assert_eq!(serialized, "\"lambda\"");
+
+        let deserialized: SpecialForm = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, SpecialForm::Lambda);
+    }
+
+    #[test]
+    fn test_special_form_invalid_deserialization() {
+        let result = serde_json::from_str::<SpecialForm>("\"invalid\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_all_special_forms() {
+        let special_forms = vec![
+            SpecialForm::If,
+            SpecialForm::Define,
+            SpecialForm::Set,
+            SpecialForm::Lambda,
+            SpecialForm::Let,
+            SpecialForm::Quote,
+            SpecialForm::Quasiquote,
+            SpecialForm::Eval,
+            SpecialForm::Apply,
+            SpecialForm::Begin,
+            SpecialForm::And,
+            SpecialForm::Or,
+            SpecialForm::CallCC,
+            SpecialForm::DefineSyntaxRule,
+        ];
+
+        for sf in special_forms {
+            let serialized = serde_json::to_string(&sf).unwrap();
+            let deserialized: SpecialForm = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(sf, deserialized);
+        }
+    }
 }
 
 #[derive(Debug)]
