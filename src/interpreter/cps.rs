@@ -7,10 +7,10 @@ use std::rc::Rc;
 use std::vec;
 
 use phf::phf_map;
-use serde::de::{self, Deserializer, SeqAccess, Visitor};
-use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 use tracing::info;
+
+use crate::interpreter::cps_json::{SerializedCont, SerializedEnv};
 
 pub fn new() -> Result<Interpreter, RuntimeError> { Interpreter::new() }
 
@@ -196,85 +196,11 @@ pub enum Function {
     Native(&'static str),
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-enum SerializedFunction {
-    Scheme { args: Vec<String>, body: List, env: SerializedEnv },
-    Native(String),
-}
-
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Function::Scheme(_, _, _) => write!(f, "#<procedure>"),
             Function::Native(ref s) => write!(f, "#<procedure:{}>", s),
-        }
-    }
-}
-
-const NATIVE_FUNCTIONS: &[&'static str] = &[
-    "+",
-    "-",
-    "*",
-    "/",
-    "<",
-    ">",
-    "=",
-    "null?",
-    "integer?",
-    "float?",
-    "list",
-    "car",
-    "cdr",
-    "cons",
-    "append",
-    "error",
-    "write",
-    "display",
-    "displayln",
-    "print",
-    "newline",
-];
-
-impl Serialize for Function {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Function::Scheme(args, body, env) => {
-                let serialized = SerializedFunction::Scheme {
-                    args: args.clone(),
-                    body: body.clone(),
-                    env: env.borrow().to_serialized(),
-                };
-                serialized.serialize(serializer)
-            }
-            Function::Native(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Function {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let serialized = SerializedFunction::deserialize(deserializer)?;
-        match serialized {
-            SerializedFunction::Scheme { args, body, env } => {
-                let env = Env::from_serialized(env);
-                Ok(Function::Scheme(args, body, env))
-            }
-            SerializedFunction::Native(name) => {
-                // 通过字符串查找对应的静态字符串
-                let static_name = NATIVE_FUNCTIONS
-                    .iter()
-                    .find(|&&func_name| func_name == name.as_str())
-                    .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;
-
-                Ok(Function::Native(static_name))
-            }
         }
     }
 }
@@ -299,98 +225,6 @@ pub enum SpecialForm {
     DefineSyntaxRule,
 }
 
-impl From<SpecialForm> for String {
-    fn from(sf: SpecialForm) -> String {
-        match sf {
-            SpecialForm::If => "if".to_string(),
-            SpecialForm::Define => "define".to_string(),
-            SpecialForm::Set => "set!".to_string(),
-            SpecialForm::Lambda => "lambda".to_string(),
-            SpecialForm::Let => "let".to_string(),
-            SpecialForm::Quote => "quote".to_string(),
-            SpecialForm::Quasiquote => "quasiquote".to_string(),
-            SpecialForm::Eval => "eval".to_string(),
-            SpecialForm::Apply => "apply".to_string(),
-            SpecialForm::Begin => "begin".to_string(),
-            SpecialForm::And => "and".to_string(),
-            SpecialForm::Or => "or".to_string(),
-            SpecialForm::CallCC => "call/cc".to_string(),
-            SpecialForm::DefineSyntaxRule => "define-syntax-rule".to_string(),
-        }
-    }
-}
-
-impl TryFrom<String> for SpecialForm {
-    type Error = serde::de::value::Error;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match s.as_str() {
-            "if" => Ok(SpecialForm::If),
-            "define" => Ok(SpecialForm::Define),
-            "set!" => Ok(SpecialForm::Set),
-            "lambda" => Ok(SpecialForm::Lambda),
-            "let" => Ok(SpecialForm::Let),
-            "quote" => Ok(SpecialForm::Quote),
-            "quasiquote" => Ok(SpecialForm::Quasiquote),
-            "eval" => Ok(SpecialForm::Eval),
-            "apply" => Ok(SpecialForm::Apply),
-            "begin" => Ok(SpecialForm::Begin),
-            "and" => Ok(SpecialForm::And),
-            "or" => Ok(SpecialForm::Or),
-            "call/cc" => Ok(SpecialForm::CallCC),
-            "define-syntax-rule" => Ok(SpecialForm::DefineSyntaxRule),
-            _ => Err(serde::de::Error::custom(format!("Invalid special form: {}", s))),
-        }
-    }
-}
-
-#[cfg(test)]
-mod test_special_form_serialization {
-    use super::*;
-
-    #[test]
-    fn test_special_form_serialization() {
-        let sf = SpecialForm::Lambda;
-        let serialized = serde_json::to_string(&sf).unwrap();
-        assert_eq!(serialized, "\"lambda\"");
-
-        let deserialized: SpecialForm = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized, SpecialForm::Lambda);
-    }
-
-    #[test]
-    fn test_special_form_invalid_deserialization() {
-        let result = serde_json::from_str::<SpecialForm>("\"invalid\"");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_all_special_forms() {
-        let special_forms = vec![
-            SpecialForm::If,
-            SpecialForm::Define,
-            SpecialForm::Set,
-            SpecialForm::Lambda,
-            SpecialForm::Let,
-            SpecialForm::Quote,
-            SpecialForm::Quasiquote,
-            SpecialForm::Eval,
-            SpecialForm::Apply,
-            SpecialForm::Begin,
-            SpecialForm::And,
-            SpecialForm::Or,
-            SpecialForm::CallCC,
-            SpecialForm::DefineSyntaxRule,
-        ];
-
-        for sf in special_forms {
-            let serialized = serde_json::to_string(&sf).unwrap();
-            let deserialized: SpecialForm = serde_json::from_str(&serialized).unwrap();
-            assert_eq!(sf, deserialized);
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct RuntimeError {
     message: String,
@@ -404,101 +238,6 @@ impl fmt::Display for RuntimeError {
 pub enum List {
     Cell(Box<Value>, Box<List>),
     Null,
-}
-
-impl Serialize for List {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // 将 List 转换为 Vec 再序列化
-        let elements: Vec<Value> = self.clone().into_iter().collect();
-        let mut seq = serializer.serialize_seq(Some(elements.len()))?;
-        for element in elements {
-            seq.serialize_element(&element)?;
-        }
-        seq.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for List {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct ListVisitor;
-
-        impl<'de> Visitor<'de> for ListVisitor {
-            type Value = List;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result { formatter.write_str("a sequence") }
-
-            fn visit_seq<V>(self, mut seq: V) -> Result<List, V::Error>
-            where
-                V: SeqAccess<'de>,
-            {
-                // 从序列构建 List
-                let mut result = List::Null;
-                while let Some(value) = seq.next_element()? {
-                    result = List::Cell(Box::new(value), Box::new(result));
-                }
-                Ok(result.reverse())
-            }
-        }
-
-        deserializer.deserialize_seq(ListVisitor)
-    }
-}
-
-pub fn serialize_list(list: &List) -> Result<String, serde_json::Error> { serde_json::to_string(list) }
-
-pub fn deserialize_list(json: &str) -> Result<List, serde_json::Error> { serde_json::from_str(json) }
-
-#[cfg(test)]
-mod test_list_serialization {
-    // use crate::interpreter::interpreter::parse_code;
-
-    use super::*;
-
-    // #[test]
-    // fn test_parsing() {
-    //     let list = parse_code(r#"(1 "hello" true)"#);
-    //     serde_json::to_string(&list).unwrap();
-    // }
-
-    #[test]
-    fn test_list_serialization() {
-        // runTest (1 "hello" true)
-
-        // 创建测试数据
-        let list = List::Cell(
-            Box::new(Value::Integer(1)),
-            Box::new(List::Cell(
-                Box::new(Value::String("hello".to_string())),
-                Box::new(List::Cell(Box::new(Value::Boolean(true)), Box::new(List::Null))),
-            )),
-        );
-
-        // 序列化
-        let json = serialize_list(&list).unwrap();
-        assert_eq!(json, r#"[{"type":"Integer","value":1},{"type":"String","value":"hello"},{"type":"Boolean","value":true}]"#,);
-
-        // 反序列化
-        let deserialized: List = deserialize_list(&json).unwrap();
-
-        // 验证
-        let original_vec: Vec<Value> = list.into_iter().collect();
-        let deserialized_vec: Vec<Value> = deserialized.into_iter().collect();
-        assert_eq!(original_vec, deserialized_vec);
-    }
-
-    #[test]
-    fn test_empty_list() {
-        let list = List::Null;
-        let json = serialize_list(&list).unwrap();
-        let deserialized: List = deserialize_list(&json).unwrap();
-        assert_eq!(list, deserialized);
-    }
 }
 
 // null == empty list
@@ -719,7 +458,7 @@ impl List {
         }
     }
 
-    fn reverse(self) -> List { self.into_iter().fold(List::Null, |acc, v| List::Cell(Box::new(v), Box::new(acc))) }
+    pub fn reverse(self) -> List { self.into_iter().fold(List::Null, |acc, v| List::Cell(Box::new(v), Box::new(acc))) }
 
     fn into_list(self) -> Value { Value::List(self) }
 
@@ -786,228 +525,6 @@ pub enum Cont {
     Return,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-enum SerializedCont {
-    EvalExpr {
-        rest: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    BeginFunc {
-        rest: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalFunc {
-        f: Value,
-        rest: List,
-        acc: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalIf {
-        if_expr: Value,
-        else_expr: Value,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalDef {
-        name: String,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalSet {
-        name: String,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalLet {
-        name: String,
-        rest: List,
-        body: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    ContinueQuasiquote {
-        rest: List,
-        acc: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    Eval {
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalApplyArgs {
-        args: Value,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    Apply {
-        f: Value,
-        next: Box<SerializedCont>,
-    },
-    EvalAnd {
-        rest: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    EvalOr {
-        rest: List,
-        env: SerializedEnv,
-        next: Box<SerializedCont>,
-    },
-    ExecCallCC {
-        next: Box<SerializedCont>,
-    },
-    Return,
-}
-
-impl Serialize for Cont {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let serialized = match self {
-            Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalFunc(f, rest, acc, env, next) => SerializedCont::EvalFunc {
-                f: f.clone(),
-                rest: rest.clone(),
-                acc: acc.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
-                if_expr: if_expr.clone(),
-                else_expr: else_expr.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
-                name: name.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
-                name: name.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalLet(name, rest, body, env, next) => SerializedCont::EvalLet {
-                name: name.clone(),
-                rest: rest.clone(),
-                body: body.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
-                rest: rest.clone(),
-                acc: acc.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Eval(env, next) => SerializedCont::Eval {
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
-                args: args.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Apply(f, next) => SerializedCont::Apply {
-                f: f.clone(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
-                rest: rest.clone(),
-                env: env.borrow().to_serialized(),
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::ExecCallCC(next) => SerializedCont::ExecCallCC {
-                next: Box::new(Self::to_serialized_cont(next)),
-            },
-
-            Cont::Return => SerializedCont::Return,
-        };
-        serialized.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Cont {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let serialized = SerializedCont::deserialize(deserializer)?;
-        Ok(Self::from_serialized_cont(serialized))
-    }
-}
-
-#[cfg(test)]
-mod test_cond_serialization {
-    use super::*;
-
-    #[cfg(test)]
-    mod test_cont_serialization {
-        use super::*;
-
-        #[test]
-        fn test_serialize_complex_cont() {
-            let env = Env::new_root().unwrap();
-
-            let inner = Cont::Return;
-            assert_eq!(serde_json::to_string(&inner).unwrap(), r#"{"type":"Return"}"#);
-
-            let middle = Cont::EvalFunc(Value::Symbol("test".to_string()), List::Null, List::Null, env.clone(), Box::new(inner));
-            let outer = Cont::EvalExpr(List::Null, env.clone(), Box::new(middle));
-
-            let serialized = serde_json::to_string(&outer).unwrap();
-            let deserialized: Cont = serde_json::from_str(&serialized).unwrap();
-
-            // 验证基本结构
-            match deserialized {
-                Cont::EvalExpr(_, _, box_middle) => match *box_middle {
-                    Cont::EvalFunc(_, _, _, _, box_inner) => match *box_inner {
-                        Cont::Return => (),
-                        _ => panic!("Wrong inner continuation type"),
-                    },
-                    _ => panic!("Wrong middle continuation type"),
-                },
-                _ => panic!("Wrong outer continuation type"),
-            }
-        }
-    }
-}
-
 pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
@@ -1022,101 +539,6 @@ impl fmt::Debug for Trampoline {
             Trampoline::QuasiquoteBounce(val, _, k) => write!(f, "QuasiquoteBounce({:?}, env, {:?})", val, k),
             Trampoline::Run(val, k) => write!(f, "Run({:?}, {:?})", val, k),
             Trampoline::Land(val) => write!(f, "Land({:?})", val),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-enum SerializedTrampoline {
-    Bounce { val: Value, env: SerializedEnv, k: Cont },
-    QuasiquoteBounce { val: Value, env: SerializedEnv, k: Cont },
-    Run { val: Value, k: Cont },
-    Land { val: Value },
-}
-
-impl Serialize for Trampoline {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Trampoline::Bounce(val, env, k) => {
-                let serialized = SerializedTrampoline::Bounce {
-                    val: val.clone(),
-                    env: env.borrow().to_serialized(),
-                    k: k.clone(),
-                };
-                serialized.serialize(serializer)
-            }
-            Trampoline::QuasiquoteBounce(val, env, k) => {
-                let serialized = SerializedTrampoline::QuasiquoteBounce {
-                    val: val.clone(),
-                    env: env.borrow().to_serialized(),
-                    k: k.clone(),
-                };
-                serialized.serialize(serializer)
-            }
-            Trampoline::Run(val, k) => {
-                let serialized = SerializedTrampoline::Run {
-                    val: val.clone(),
-                    k: k.clone(),
-                };
-                serialized.serialize(serializer)
-            }
-            Trampoline::Land(val) => {
-                let serialized = SerializedTrampoline::Land { val: val.clone() };
-                serialized.serialize(serializer)
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Trampoline {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let serialized = SerializedTrampoline::deserialize(deserializer)?;
-
-        Ok(match serialized {
-            SerializedTrampoline::Bounce { val, env, k } => Trampoline::Bounce(val, Env::from_serialized(env), k),
-            SerializedTrampoline::QuasiquoteBounce { val, env, k } => Trampoline::QuasiquoteBounce(val, Env::from_serialized(env), k),
-            SerializedTrampoline::Run { val, k } => Trampoline::Run(val, k),
-            SerializedTrampoline::Land { val } => Trampoline::Land(val),
-        })
-    }
-}
-
-#[cfg(test)]
-mod test_trampoline_serialization {
-    use super::*;
-
-    #[test]
-    fn test_serialize_land() {
-        let t = Trampoline::Land(Value::Integer(42));
-        let serialized = serde_json::to_string(&t).unwrap();
-        let deserialized: Trampoline = serde_json::from_str(&serialized).unwrap();
-
-        match deserialized {
-            Trampoline::Land(Value::Integer(n)) => assert_eq!(n, 42),
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_serialize_run() {
-        let env = Env::new_root().unwrap();
-        let t = Trampoline::Run(Value::Integer(1), Cont::Return);
-
-        let serialized = serde_json::to_string(&t).unwrap();
-        let deserialized: Trampoline = serde_json::from_str(&serialized).unwrap();
-
-        match deserialized {
-            Trampoline::Run(Value::Integer(n), Cont::Return) => {
-                assert_eq!(n, 1);
-            }
-            _ => panic!("Wrong variant"),
         }
     }
 }
@@ -1376,7 +798,7 @@ impl Cont {
         }
     }
 
-    fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
+    pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
         match &**cont {
             Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
                 rest: rest.clone(),
@@ -1468,7 +890,7 @@ impl Cont {
         }
     }
 
-    fn from_serialized_cont(serialized: SerializedCont) -> Self {
+    pub fn from_serialized_cont(serialized: SerializedCont) -> Self {
         match serialized {
             SerializedCont::EvalExpr { rest, env, next } => {
                 Cont::EvalExpr(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
@@ -1792,12 +1214,6 @@ pub struct Env {
     values: HashMap<String, Value>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct SerializedEnv {
-    parent: Option<Box<SerializedEnv>>,
-    values: HashMap<String, Value>,
-}
-
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.parent {
@@ -1808,7 +1224,7 @@ impl fmt::Debug for Env {
 }
 
 impl Env {
-    fn new_root() -> Result<Rc<RefCell<Env>>, RuntimeError> {
+    pub fn new_root() -> Result<Rc<RefCell<Env>>, RuntimeError> {
         let mut env = Env {
             parent: None,
             values: HashMap::new(),
@@ -1902,7 +1318,7 @@ impl Env {
         }
     }
 
-    fn to_serialized(&self) -> SerializedEnv {
+    pub fn to_serialized(&self) -> SerializedEnv {
         let parent = self.parent.as_ref().map(|p| Box::new(p.borrow().to_serialized()));
 
         SerializedEnv {
@@ -1911,7 +1327,7 @@ impl Env {
         }
     }
 
-    fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
+    pub fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
         let parent = serialized.parent.map(|p| Env::from_serialized(*p));
 
         let env = Env {
@@ -2104,567 +1520,571 @@ fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
 }
 
 #[cfg(test)]
-fn exec(list: List) -> Result<Value, RuntimeError> { process(list, Env::new_root()?) }
+mod test_cps {
+    use super::*;
 
-#[test]
-fn test_add1() {
-    // runTest (+ 1 2) => 3
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("+".to_string()),
-        Value::Integer(1),
-        Value::Integer(2),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
-}
+    fn exec(list: List) -> Result<Value, RuntimeError> { process(list, Env::new_root()?) }
 
-#[test]
-fn test_add2() {
-    // runTest (+ (+ 1 2) (+ 3 4)) => 10
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("+".to_string()),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(10));
-}
-
-#[test]
-fn test_add3() {
-    // runTest (+ (+ 1 2) (+ (+ 3 5 6) 4)) => 21
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("+".to_string()),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
-        Value::from_vec(vec![
+    #[test]
+    fn test_add1() {
+        // runTest (+ 1 2) => 3
+        let i = vec![Value::from_vec(vec![
             Value::Symbol("+".to_string()),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(5), Value::Integer(6)]),
-            Value::Integer(4),
-        ]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(21));
-}
-
-#[test]
-fn test_subtract1() {
-    // runTest (- 3 2) => 1
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("-".to_string()),
-        Value::Integer(3),
-        Value::Integer(2),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(1));
-}
-
-#[test]
-fn test_if1() {
-    // runTest (if (> 1 2) 3 4) => 4
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("if".to_string()),
-        Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(1), Value::Integer(2)]),
-        Value::Integer(3),
-        Value::Integer(4),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
-}
-
-#[test]
-fn test_if2() {
-    // runTest (if (> 2 3) (error 4) (error 5)) => null
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("if".to_string()),
-        Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(2), Value::Integer(3)]),
-        Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(4)]),
-        Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(5)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap_err().to_string(), "RuntimeError: 5");
-}
-
-#[test]
-fn test_if3() {
-    // runTest (if ((if (> 5 4) > <) (+ 1 2) 2) (+ 5 7 8) (+ 9 10 11)) => 20
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("if".to_string()),
-        Value::from_vec(vec![
-            Value::from_vec(vec![
-                Value::Symbol("if".to_string()),
-                Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(5), Value::Integer(4)]),
-                Value::Symbol(">".to_string()),
-                Value::Symbol("<".to_string()),
-            ]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+            Value::Integer(1),
             Value::Integer(2),
-        ]),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(5), Value::Integer(7), Value::Integer(8)]),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(9), Value::Integer(10), Value::Integer(11)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(20));
-}
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
+    }
 
-#[test]
-fn test_if4() {
-    // runTest (if 0 3 4) => 3
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("if".to_string()),
-        Value::Integer(0),
-        Value::Integer(3),
-        Value::Integer(4),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
-}
-
-#[test]
-fn test_and1() {
-    // runTest (and) => #t
-    let i = vec![Value::from_vec(vec![Value::Symbol("and".to_string())])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
-}
-
-#[test]
-fn test_and2() {
-    // runTest (and #f) => #f
-    let i = vec![Value::from_vec(vec![Value::Symbol("and".to_string()), Value::Boolean(false)])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
-}
-
-#[test]
-fn test_and3() {
-    // runTest (and #f #t #f) => #f
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("and".to_string()),
-        Value::Boolean(false),
-        Value::Boolean(true),
-        Value::Boolean(false),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
-}
-
-#[test]
-fn test_and4() {
-    // runTest (and 0 1) => 1
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("and".to_string()),
-        Value::Integer(0),
-        Value::Integer(1),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(1));
-}
-
-#[test]
-fn test_and5() {
-    // runTest (and #f (error 2)) => #f
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("and".to_string()),
-        Value::Boolean(false),
-        Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(2)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
-}
-
-#[test]
-fn test_or1() {
-    // runTest (or) => #f
-    let i = vec![Value::from_vec(vec![Value::Symbol("or".to_string())])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
-}
-
-#[test]
-fn test_or2() {
-    // runTest (or #f) => #f
-    let i = vec![Value::from_vec(vec![Value::Symbol("or".to_string()), Value::Boolean(false)])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
-}
-
-#[test]
-fn test_or3() {
-    // runTest (or #f #t #f) => #t
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("or".to_string()),
-        Value::Boolean(false),
-        Value::Boolean(true),
-        Value::Boolean(false),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
-}
-
-#[test]
-fn test_or4() {
-    // runTest (or 0 1) => 0
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("or".to_string()),
-        Value::Integer(0),
-        Value::Integer(1),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(0));
-}
-
-#[test]
-fn test_or5() {
-    // runTest (or #t (error 2)) => #t
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("or".to_string()),
-        Value::Boolean(true),
-        Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(2)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
-}
-
-#[test]
-fn test_multiple_statements() {
-    // runTest (+ 1 2) (+ 3 4) => 7
-    let i = vec![
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
-}
-
-#[test]
-fn test_list() {
-    // runTest (list 1 2 3) => '(1 2 3)
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("list".to_string()),
-        Value::Integer(1),
-        Value::Integer(2),
-        Value::Integer(3),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
-}
-
-#[test]
-fn test_cons() {
-    // runTest (cons 1 (list 2 3)) => '(1 2 3)
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("cons".to_string()),
-        Value::Integer(1),
-        Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
-}
-
-#[test]
-fn test_define() {
-    // runTest (define x 2) (+ x x) => 4
-    let i = vec![
-        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        Value::from_vec(vec![
+    #[test]
+    fn test_add2() {
+        // runTest (+ (+ 1 2) (+ 3 4)) => 10
+        let i = vec![Value::from_vec(vec![
             Value::Symbol("+".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Symbol("x".to_string()),
-        ]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
-}
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(10));
+    }
 
-#[test]
-fn test_set() {
-    // runTest (define x 2) (set! x 3) (+ x x) => 6
-    let i = vec![
-        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(3)]),
-        Value::from_vec(vec![
+    #[test]
+    fn test_add3() {
+        // runTest (+ (+ 1 2) (+ (+ 3 5 6) 4)) => 21
+        let i = vec![Value::from_vec(vec![
             Value::Symbol("+".to_string()),
-            Value::Symbol("x".to_string()),
-            Value::Symbol("x".to_string()),
-        ]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(6));
-}
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+            Value::from_vec(vec![
+                Value::Symbol("+".to_string()),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(5), Value::Integer(6)]),
+                Value::Integer(4),
+            ]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(21));
+    }
 
-#[test]
-fn test_lambda() {
-    // runTest ((lambda (x) (+ x 2)) 3) => 5
-    let i = vec![Value::from_vec(vec![
-        Value::from_vec(vec![
-            Value::Symbol("lambda".to_string()),
-            Value::from_vec(vec![Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        ]),
-        Value::Integer(3),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
-}
-
-#[test]
-fn test_lambda_symbol() {
-    // runTest ((λ (x) (+ x 2)) 3) => 5
-    let i = vec![Value::from_vec(vec![
-        Value::from_vec(vec![
-            Value::Symbol("λ".to_string()),
-            Value::from_vec(vec![Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        ]),
-        Value::Integer(3),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
-}
-
-#[test]
-fn test_define_func() {
-    // runTest (define (f x) (+ x 2)) (f 3) => 5
-    let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        ]),
-        Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Integer(3)]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
-}
-
-#[test]
-fn test_define_func2() {
-    // runTest (define (noop) (+ 0 0)) (define (f x) (noop) (+ x 2)) ((lambda () (f 3))) => 5
-    let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("noop".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(0), Value::Integer(0)]),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
-            Value::from_vec(vec![Value::Symbol("noop".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
-        ]),
-        Value::from_vec(vec![Value::from_vec(vec![
-            Value::Symbol("lambda".to_string()),
-            null!(),
-            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Integer(3)]),
-        ])]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
-}
-
-#[test]
-fn test_native_fn_as_value() {
-    // runTest + => #<procedure:+>
-    let i = vec![Value::Symbol("+".to_string())];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Function::Native("+")));
-}
-
-#[test]
-fn test_dynamic_native_fn() {
-    // runTest ((if (> 3 2) + -) 4 3) => 7
-    let i = vec![Value::from_vec(vec![
-        Value::from_vec(vec![
-            Value::Symbol("if".to_string()),
-            Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(3), Value::Integer(2)]),
-            Value::Symbol("+".to_string()),
+    #[test]
+    fn test_subtract1() {
+        // runTest (- 3 2) => 1
+        let i = vec![Value::from_vec(vec![
             Value::Symbol("-".to_string()),
-        ]),
-        Value::Integer(4),
-        Value::Integer(3),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
-}
-
-#[test]
-fn test_let_bindings() {
-    // runTest (let ((x 3)) (+ x 1)) => 4
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("let".to_string()),
-        Value::from_vec(vec![Value::from_vec(vec![Value::Symbol("x".to_string()), Value::Integer(3)])]),
-        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
-}
-
-#[test]
-fn test_quoting() {
-    // runTest (quote (1 2)) => (1 2)
-    let code = vec![Value::from_vec(vec![
-        Value::Symbol("quote".to_string()),
-        Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]),
-    ])];
-    assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
-}
-
-#[test]
-fn test_quasiquoting() {
-    // runTest (quasiquote (2 (unquote (+ 1 2)) 4)) => (2 3 4)
-    let code = vec![Value::from_vec(vec![
-        Value::Symbol("quasiquote".to_string()),
-        Value::from_vec(vec![
+            Value::Integer(3),
             Value::Integer(2),
-            Value::from_vec(vec![
-                Value::Symbol("unquote".to_string()),
-                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
-            ]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(1));
+    }
+
+    #[test]
+    fn test_if1() {
+        // runTest (if (> 1 2) 3 4) => 4
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("if".to_string()),
+            Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(1), Value::Integer(2)]),
+            Value::Integer(3),
             Value::Integer(4),
-        ]),
-    ])];
-    assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
-}
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
+    }
 
-// #[test]
-// fn test_cps_unquote_slicing() {
-//     // runTest (quasiquote (1 (unquote-slicing (list 2 3)) 4)) => (1 2 3 4)
-//     let i = vec![Value::from_vec(vec![
-//         Value::Symbol("quasiquote".to_string()),
-//         Value::from_vec(vec![
-//             Value::Integer(1),
-//             Value::from_vec(vec![
-//                 Value::Symbol("unquote-slicing".to_string()),
-//                 Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
-//             ]),
-//             Value::Integer(4),
-//         ]),
-//     ])];
-//     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
-// }
+    #[test]
+    fn test_if2() {
+        // runTest (if (> 2 3) (error 4) (error 5)) => null
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("if".to_string()),
+            Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(2), Value::Integer(3)]),
+            Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(4)]),
+            Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(5)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap_err().to_string(), "RuntimeError: 5");
+    }
 
-#[test]
-fn test_eval() {
-    // runTest (eval (quote (+ 1 2))) => 3
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("eval".to_string()),
-        Value::from_vec(vec![
-            Value::Symbol("quote".to_string()),
-            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
-        ]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
-}
-
-#[test]
-fn test_eval2() {
-    // runTest (define (foo x) (eval (quote (+ 1 2))) x) (foo 5) => 5
-    let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("x".to_string())]),
+    #[test]
+    fn test_if3() {
+        // runTest (if ((if (> 5 4) > <) (+ 1 2) 2) (+ 5 7 8) (+ 9 10 11)) => 20
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("if".to_string()),
             Value::from_vec(vec![
-                Value::Symbol("eval".to_string()),
                 Value::from_vec(vec![
-                    Value::Symbol("quote".to_string()),
-                    Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+                    Value::Symbol("if".to_string()),
+                    Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(5), Value::Integer(4)]),
+                    Value::Symbol(">".to_string()),
+                    Value::Symbol("<".to_string()),
                 ]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+                Value::Integer(2),
             ]),
-            Value::Symbol("x".to_string()),
-        ]),
-        Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Integer(5)]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
-}
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(5), Value::Integer(7), Value::Integer(8)]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(9), Value::Integer(10), Value::Integer(11)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(20));
+    }
 
-#[test]
-fn test_apply() {
-    // runTest (apply + (quote (1 2 3))) => 6
-    let i = vec![Value::from_vec(vec![
-        Value::Symbol("apply".to_string()),
-        Value::Symbol("+".to_string()),
-        Value::from_vec(vec![
-            Value::Symbol("quote".to_string()),
-            Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]),
-        ]),
-    ])];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(6));
-}
+    #[test]
+    fn test_if4() {
+        // runTest (if 0 3 4) => 3
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("if".to_string()),
+            Value::Integer(0),
+            Value::Integer(3),
+            Value::Integer(4),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
+    }
 
-#[test]
-fn test_begin() {
-    // runTest (define x 1) (begin (set! x 5) (set! x (+ x 2)) x) => 7
-    let i = vec![
-        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
-        Value::from_vec(vec![
-            Value::Symbol("begin".to_string()),
-            Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(5)]),
+    #[test]
+    fn test_and1() {
+        // runTest (and) => #t
+        let i = vec![Value::from_vec(vec![Value::Symbol("and".to_string())])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_and2() {
+        // runTest (and #f) => #f
+        let i = vec![Value::from_vec(vec![Value::Symbol("and".to_string()), Value::Boolean(false)])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_and3() {
+        // runTest (and #f #t #f) => #f
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("and".to_string()),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(false),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_and4() {
+        // runTest (and 0 1) => 1
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("and".to_string()),
+            Value::Integer(0),
+            Value::Integer(1),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(1));
+    }
+
+    #[test]
+    fn test_and5() {
+        // runTest (and #f (error 2)) => #f
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("and".to_string()),
+            Value::Boolean(false),
+            Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(2)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_or1() {
+        // runTest (or) => #f
+        let i = vec![Value::from_vec(vec![Value::Symbol("or".to_string())])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_or2() {
+        // runTest (or #f) => #f
+        let i = vec![Value::from_vec(vec![Value::Symbol("or".to_string()), Value::Boolean(false)])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_or3() {
+        // runTest (or #f #t #f) => #t
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("or".to_string()),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(false),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_or4() {
+        // runTest (or 0 1) => 0
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("or".to_string()),
+            Value::Integer(0),
+            Value::Integer(1),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(0));
+    }
+
+    #[test]
+    fn test_or5() {
+        // runTest (or #t (error 2)) => #t
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("or".to_string()),
+            Value::Boolean(true),
+            Value::from_vec(vec![Value::Symbol("error".to_string()), Value::Integer(2)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_multiple_statements() {
+        // runTest (+ 1 2) (+ 3 4) => 7
+        let i = vec![
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(3), Value::Integer(4)]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
+    }
+
+    #[test]
+    fn test_list() {
+        // runTest (list 1 2 3) => '(1 2 3)
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("list".to_string()),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+    }
+
+    #[test]
+    fn test_cons() {
+        // runTest (cons 1 (list 2 3)) => '(1 2 3)
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("cons".to_string()),
+            Value::Integer(1),
+            Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+    }
+
+    #[test]
+    fn test_define() {
+        // runTest (define x 2) (+ x x) => 4
+        let i = vec![
+            Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
             Value::from_vec(vec![
-                Value::Symbol("set!".to_string()),
+                Value::Symbol("+".to_string()),
                 Value::Symbol("x".to_string()),
+                Value::Symbol("x".to_string()),
+            ]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
+    }
+
+    #[test]
+    fn test_set() {
+        // runTest (define x 2) (set! x 3) (+ x x) => 6
+        let i = vec![
+            Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+            Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(3)]),
+            Value::from_vec(vec![
+                Value::Symbol("+".to_string()),
+                Value::Symbol("x".to_string()),
+                Value::Symbol("x".to_string()),
+            ]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(6));
+    }
+
+    #[test]
+    fn test_lambda() {
+        // runTest ((lambda (x) (+ x 2)) 3) => 5
+        let i = vec![Value::from_vec(vec![
+            Value::from_vec(vec![
+                Value::Symbol("lambda".to_string()),
+                Value::from_vec(vec![Value::Symbol("x".to_string())]),
                 Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
             ]),
-            Value::Symbol("x".to_string()),
-        ]),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
-}
+            Value::Integer(3),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
+    }
 
-#[test]
-fn test_callcc() {
-    // runTest
-    //   (define x 0)
-    //   (define (+x n) (set! x (+ x n)))
-    //   (define (foo k) (+x 2) (k) (+x 4))
-    //   ((lambda ()
-    //      (+x 1)
-    //      (call/cc foo)
-    //      (+x 8)))
-    //   x
-    // => 11
-    let i = vec![
-        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(0)]),
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Symbol("n".to_string())]),
+    #[test]
+    fn test_lambda_symbol() {
+        // runTest ((λ (x) (+ x 2)) 3) => 5
+        let i = vec![Value::from_vec(vec![
             Value::from_vec(vec![
-                Value::Symbol("set!".to_string()),
-                Value::Symbol("x".to_string()),
+                Value::Symbol("λ".to_string()),
+                Value::from_vec(vec![Value::Symbol("x".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+            ]),
+            Value::Integer(3),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
+    }
+
+    #[test]
+    fn test_define_func() {
+        // runTest (define (f x) (+ x 2)) (f 3) => 5
+        let i = vec![
+            Value::from_vec(vec![
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+            ]),
+            Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Integer(3)]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
+    }
+
+    #[test]
+    fn test_define_func2() {
+        // runTest (define (noop) (+ 0 0)) (define (f x) (noop) (+ x 2)) ((lambda () (f 3))) => 5
+        let i = vec![
+            Value::from_vec(vec![
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("noop".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(0), Value::Integer(0)]),
+            ]),
+            Value::from_vec(vec![
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Symbol("x".to_string())]),
+                Value::from_vec(vec![Value::Symbol("noop".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+            ]),
+            Value::from_vec(vec![Value::from_vec(vec![
+                Value::Symbol("lambda".to_string()),
+                null!(),
+                Value::from_vec(vec![Value::Symbol("f".to_string()), Value::Integer(3)]),
+            ])]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
+    }
+
+    #[test]
+    fn test_native_fn_as_value() {
+        // runTest + => #<procedure:+>
+        let i = vec![Value::Symbol("+".to_string())];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Function::Native("+")));
+    }
+
+    #[test]
+    fn test_dynamic_native_fn() {
+        // runTest ((if (> 3 2) + -) 4 3) => 7
+        let i = vec![Value::from_vec(vec![
+            Value::from_vec(vec![
+                Value::Symbol("if".to_string()),
+                Value::from_vec(vec![Value::Symbol(">".to_string()), Value::Integer(3), Value::Integer(2)]),
+                Value::Symbol("+".to_string()),
+                Value::Symbol("-".to_string()),
+            ]),
+            Value::Integer(4),
+            Value::Integer(3),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
+    }
+
+    #[test]
+    fn test_let_bindings() {
+        // runTest (let ((x 3)) (+ x 1)) => 4
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("let".to_string()),
+            Value::from_vec(vec![Value::from_vec(vec![Value::Symbol("x".to_string()), Value::Integer(3)])]),
+            Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(4));
+    }
+
+    #[test]
+    fn test_quoting() {
+        // runTest (quote (1 2)) => (1 2)
+        let code = vec![Value::from_vec(vec![
+            Value::Symbol("quote".to_string()),
+            Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]),
+        ])];
+        assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2)]));
+    }
+
+    #[test]
+    fn test_quasiquoting() {
+        // runTest (quasiquote (2 (unquote (+ 1 2)) 4)) => (2 3 4)
+        let code = vec![Value::from_vec(vec![
+            Value::Symbol("quasiquote".to_string()),
+            Value::from_vec(vec![
+                Value::Integer(2),
                 Value::from_vec(vec![
-                    Value::Symbol("+".to_string()),
+                    Value::Symbol("unquote".to_string()),
+                    Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+                ]),
+                Value::Integer(4),
+            ]),
+        ])];
+        assert_eq!(exec(List::from_vec(code)).unwrap(), Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
+    }
+
+    // #[test]
+    // fn test_cps_unquote_slicing() {
+    //     // runTest (quasiquote (1 (unquote-slicing (list 2 3)) 4)) => (1 2 3 4)
+    //     let i = vec![Value::from_vec(vec![
+    //         Value::Symbol("quasiquote".to_string()),
+    //         Value::from_vec(vec![
+    //             Value::Integer(1),
+    //             Value::from_vec(vec![
+    //                 Value::Symbol("unquote-slicing".to_string()),
+    //                 Value::from_vec(vec![Value::Symbol("list".to_string()), Value::Integer(2), Value::Integer(3)]),
+    //             ]),
+    //             Value::Integer(4),
+    //         ]),
+    //     ])];
+    //     assert_eq!(exec(List::from_vec(i)).unwrap(), Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
+    // }
+
+    #[test]
+    fn test_eval() {
+        // runTest (eval (quote (+ 1 2))) => 3
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("eval".to_string()),
+            Value::from_vec(vec![
+                Value::Symbol("quote".to_string()),
+                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+            ]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(3));
+    }
+
+    #[test]
+    fn test_eval2() {
+        // runTest (define (foo x) (eval (quote (+ 1 2))) x) (foo 5) => 5
+        let i = vec![
+            Value::from_vec(vec![
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("x".to_string())]),
+                Value::from_vec(vec![
+                    Value::Symbol("eval".to_string()),
+                    Value::from_vec(vec![
+                        Value::Symbol("quote".to_string()),
+                        Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]),
+                    ]),
+                ]),
+                Value::Symbol("x".to_string()),
+            ]),
+            Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Integer(5)]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(5));
+    }
+
+    #[test]
+    fn test_apply() {
+        // runTest (apply + (quote (1 2 3))) => 6
+        let i = vec![Value::from_vec(vec![
+            Value::Symbol("apply".to_string()),
+            Value::Symbol("+".to_string()),
+            Value::from_vec(vec![
+                Value::Symbol("quote".to_string()),
+                Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]),
+            ]),
+        ])];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(6));
+    }
+
+    #[test]
+    fn test_begin() {
+        // runTest (define x 1) (begin (set! x 5) (set! x (+ x 2)) x) => 7
+        let i = vec![
+            Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
+            Value::from_vec(vec![
+                Value::Symbol("begin".to_string()),
+                Value::from_vec(vec![Value::Symbol("set!".to_string()), Value::Symbol("x".to_string()), Value::Integer(5)]),
+                Value::from_vec(vec![
+                    Value::Symbol("set!".to_string()),
                     Value::Symbol("x".to_string()),
-                    Value::Symbol("n".to_string()),
+                    Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(2)]),
+                ]),
+                Value::Symbol("x".to_string()),
+            ]),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(7));
+    }
+
+    #[test]
+    fn test_callcc() {
+        // runTest
+        //   (define x 0)
+        //   (define (+x n) (set! x (+ x n)))
+        //   (define (foo k) (+x 2) (k) (+x 4))
+        //   ((lambda ()
+        //      (+x 1)
+        //      (call/cc foo)
+        //      (+x 8)))
+        //   x
+        // => 11
+        let i = vec![
+            Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("x".to_string()), Value::Integer(0)]),
+            Value::from_vec(vec![
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Symbol("n".to_string())]),
+                Value::from_vec(vec![
+                    Value::Symbol("set!".to_string()),
+                    Value::Symbol("x".to_string()),
+                    Value::from_vec(vec![
+                        Value::Symbol("+".to_string()),
+                        Value::Symbol("x".to_string()),
+                        Value::Symbol("n".to_string()),
+                    ]),
                 ]),
             ]),
-        ]),
-        Value::from_vec(vec![
-            Value::Symbol("define".to_string()),
-            Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("k".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(2)]),
-            Value::from_vec(vec![Value::Symbol("k".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(4)]),
-        ]),
-        Value::from_vec(vec![Value::from_vec(vec![
-            Value::Symbol("lambda".to_string()),
-            null!(),
-            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(1)]),
-            Value::from_vec(vec![Value::Symbol("call/cc".to_string()), Value::Symbol("foo".to_string())]),
-            Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(8)]),
-        ])]),
-        Value::Symbol("x".to_string()),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(11));
-}
-
-#[test]
-fn test_macros() {
-    // runTest (define-syntax-rule (incr x) (set! x (+ x 1))) (define a 1) (incr a) a => 2
-    let i = vec![
-        Value::from_vec(vec![
-            Value::Symbol("define-syntax-rule".to_string()),
-            Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("x".to_string())]),
             Value::from_vec(vec![
-                Value::Symbol("set!".to_string()),
-                Value::Symbol("x".to_string()),
-                Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
+                Value::Symbol("define".to_string()),
+                Value::from_vec(vec![Value::Symbol("foo".to_string()), Value::Symbol("k".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(2)]),
+                Value::from_vec(vec![Value::Symbol("k".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(4)]),
             ]),
-        ]),
-        Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("a".to_string()), Value::Integer(1)]),
-        Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("a".to_string())]),
-        Value::Symbol("a".to_string()),
-    ];
-    assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(2));
-}
-
-#[test]
-fn test_list_iter() {
-    let l = List::Cell(
-        Box::new(Value::Integer(1)),
-        Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
-    );
-    let mut x = 0;
-    for i in l {
-        x += 1;
-        assert_eq!(i, Value::Integer(x));
+            Value::from_vec(vec![Value::from_vec(vec![
+                Value::Symbol("lambda".to_string()),
+                null!(),
+                Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(1)]),
+                Value::from_vec(vec![Value::Symbol("call/cc".to_string()), Value::Symbol("foo".to_string())]),
+                Value::from_vec(vec![Value::Symbol("+x".to_string()), Value::Integer(8)]),
+            ])]),
+            Value::Symbol("x".to_string()),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(11));
     }
-    assert_eq!(x, 3);
-}
 
-#[test]
-fn test_list_to_string() {
-    let l = List::Cell(
-        Box::new(Value::Integer(1)),
-        Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
-    );
-    assert_eq!(l.to_string(), "(1 2 3)");
+    #[test]
+    fn test_macros() {
+        // runTest (define-syntax-rule (incr x) (set! x (+ x 1))) (define a 1) (incr a) a => 2
+        let i = vec![
+            Value::from_vec(vec![
+                Value::Symbol("define-syntax-rule".to_string()),
+                Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("x".to_string())]),
+                Value::from_vec(vec![
+                    Value::Symbol("set!".to_string()),
+                    Value::Symbol("x".to_string()),
+                    Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Symbol("x".to_string()), Value::Integer(1)]),
+                ]),
+            ]),
+            Value::from_vec(vec![Value::Symbol("define".to_string()), Value::Symbol("a".to_string()), Value::Integer(1)]),
+            Value::from_vec(vec![Value::Symbol("incr".to_string()), Value::Symbol("a".to_string())]),
+            Value::Symbol("a".to_string()),
+        ];
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Integer(2));
+    }
+
+    #[test]
+    fn test_list_iter() {
+        let l = List::Cell(
+            Box::new(Value::Integer(1)),
+            Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
+        );
+        let mut x = 0;
+        for i in l {
+            x += 1;
+            assert_eq!(i, Value::Integer(x));
+        }
+        assert_eq!(x, 3);
+    }
+
+    #[test]
+    fn test_list_to_string() {
+        let l = List::Cell(
+            Box::new(Value::Integer(1)),
+            Box::new(List::Cell(Box::new(Value::Integer(2)), Box::new(List::Cell(Box::new(Value::Integer(3)), Box::new(List::Null))))),
+        );
+        assert_eq!(l.to_string(), "(1 2 3)");
+    }
 }
