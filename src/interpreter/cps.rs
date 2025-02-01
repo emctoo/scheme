@@ -57,7 +57,7 @@ pub enum Value {
     SpecialForm(SpecialForm),
     Macro(Vec<String>, Box<Value>),
     #[serde(skip)]
-    Continuation(Box<Cont>),
+    Cont(Box<Cont>),
 }
 
 impl std::ops::Add for Value {
@@ -175,7 +175,7 @@ impl fmt::Display for Value {
             Value::List(ref list) => write!(f, "{}", list),
             Value::Procedure(_) => write!(f, "#<procedure>"),
             Value::SpecialForm(_) => write!(f, "#<special_form>"),
-            Value::Continuation(_) => write!(f, "#<continuation>"),
+            Value::Cont(_) => write!(f, "#<continuation>"),
             Value::Macro(_, _) => write!(f, "#<macro>"),
         }
     }
@@ -280,7 +280,7 @@ impl<'de> Deserialize<'de> for Function {
     }
 }
 
-#[derive(PartialEq, Clone, Debug,  Serialize, Deserialize)]
+#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
 #[serde(into = "String")]
 #[serde(try_from = "String")]
 pub enum SpecialForm {
@@ -1049,7 +1049,7 @@ impl Cont {
             Cont::ContinueQuasiquote(rest, acc, env, k) => cont_continue_quasiquote(val, rest, acc, env, k),
 
             Cont::Apply(f, k) => apply(f, val.into_list()?, k),
-            Cont::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Continuation(k.clone())), k),
+            Cont::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Cont(k.clone())), k),
 
             Cont::EvalAnd(rest, env, k) => cont_eval_and(val, rest, env, k),
             Cont::EvalOr(rest, env, k) => cont_eval_or(val, rest, env, k),
@@ -1063,7 +1063,7 @@ impl Cont {
 
 fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Continuation(c) => Ok(Trampoline::Run(args.into_list(), *c)),
+        Value::Cont(c) => Ok(Trampoline::Run(args.into_list(), *c)),
         Value::Procedure(Function::Native(f)) => Ok(Trampoline::Run(primitive(f, args)?, *k)),
         Value::Procedure(Function::Scheme(arg_names, body, env)) => {
             if arg_names.len() != args.len() {
