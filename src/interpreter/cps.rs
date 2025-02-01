@@ -7,6 +7,9 @@ use std::rc::Rc;
 use std::vec;
 
 use phf::phf_map;
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
+use serde::ser::{SerializeSeq, Serializer};
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 pub fn new() -> Result<Interpreter, RuntimeError> { Interpreter::new() }
@@ -40,17 +43,26 @@ macro_rules! shift_or_error {
     )
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum Value {
     Symbol(String),
     Integer(i64),
     Float(f64),
     Boolean(bool),
     String(String),
+
     List(List),
+
+    #[serde(skip)]
     Procedure(Function),
+
+    #[serde(skip)]
     SpecialForm(SpecialForm),
+
     Macro(Vec<String>, Box<Value>),
+
+    #[serde(skip)]
     Continuation(Box<Cont>),
 }
 
@@ -231,6 +243,101 @@ impl fmt::Display for RuntimeError {
 pub enum List {
     Cell(Box<Value>, Box<List>),
     Null,
+}
+
+impl Serialize for List {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // 将 List 转换为 Vec 再序列化
+        let elements: Vec<Value> = self.clone().into_iter().collect();
+        let mut seq = serializer.serialize_seq(Some(elements.len()))?;
+        for element in elements {
+            seq.serialize_element(&element)?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for List {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ListVisitor;
+
+        impl<'de> Visitor<'de> for ListVisitor {
+            type Value = List;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result { formatter.write_str("a sequence") }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<List, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                // 从序列构建 List
+                let mut result = List::Null;
+                while let Some(value) = seq.next_element()? {
+                    result = List::Cell(Box::new(value), Box::new(result));
+                }
+                Ok(result.reverse())
+            }
+        }
+
+        deserializer.deserialize_seq(ListVisitor)
+    }
+}
+
+pub fn serialize_list(list: &List) -> Result<String, serde_json::Error> { serde_json::to_string(list) }
+
+pub fn deserialize_list(json: &str) -> Result<List, serde_json::Error> { serde_json::from_str(json) }
+
+#[cfg(test)]
+mod test_list_serialization {
+    // use crate::interpreter::interpreter::parse_code;
+
+    use super::*;
+
+    // #[test]
+    // fn test_parsing() {
+    //     let list = parse_code(r#"(1 "hello" true)"#);
+    //     serde_json::to_string(&list).unwrap();
+    // }
+
+    #[test]
+    fn test_list_serialization() {
+        // runTest (1 "hello" true)
+
+        // 创建测试数据
+        let list = List::Cell(
+            Box::new(Value::Integer(1)),
+            Box::new(List::Cell(
+                Box::new(Value::String("hello".to_string())),
+                Box::new(List::Cell(Box::new(Value::Boolean(true)), Box::new(List::Null))),
+            )),
+        );
+
+        // 序列化
+        let json = serialize_list(&list).unwrap();
+        assert_eq!(json, r#"[{"type":"Integer","value":1},{"type":"String","value":"hello"},{"type":"Boolean","value":true}]"#,);
+
+        // 反序列化
+        let deserialized: List = deserialize_list(&json).unwrap();
+
+        // 验证
+        let original_vec: Vec<Value> = list.into_iter().collect();
+        let deserialized_vec: Vec<Value> = deserialized.into_iter().collect();
+        assert_eq!(original_vec, deserialized_vec);
+    }
+
+    #[test]
+    fn test_empty_list() {
+        let list = List::Null;
+        let json = serialize_list(&list).unwrap();
+        let deserialized: List = deserialize_list(&json).unwrap();
+        assert_eq!(list, deserialized);
+    }
 }
 
 // null == empty list
@@ -522,7 +629,18 @@ pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
     Run(Value, Cont),
-    Return(Value),
+    Land(Value),
+}
+
+impl fmt::Debug for Trampoline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Trampoline::Bounce(val, _, k) => write!(f, "Bounce({:?}, env, {:?})", val, k),
+            Trampoline::QuasiquoteBounce(val, _, k) => write!(f, "QuasiquoteBounce({:?}, env, {:?})", val, k),
+            Trampoline::Run(val, k) => write!(f, "Run({:?}, {:?})", val, k),
+            Trampoline::Land(val) => write!(f, "Land({:?})", val),
+        }
+    }
 }
 
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
@@ -745,6 +863,7 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>)
 }
 
 fn cont_eval_expr(val: Value, expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+    info!("C/E eval {}", val);
     match expr.is_empty() {
         true => Ok(Trampoline::Run(val, *k)),
         false => eval(expr, env, k),
@@ -753,6 +872,8 @@ fn cont_eval_expr(val: Value, expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -
 
 impl Cont {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
+        info!("Running continuation {:?} with value {:?}", self, val);
+
         match self {
             Cont::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
 
@@ -773,7 +894,7 @@ impl Cont {
 
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
-            Cont::Return => Ok(Trampoline::Return(val)),
+            Cont::Return => Ok(Trampoline::Land(val)),
         }
     }
 }
@@ -835,31 +956,53 @@ static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
 };
 
 fn process(exprs: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
+    info!("Starting process with expressions: {:?}", exprs);
+
     if exprs.is_empty() {
+        info!("Empty expressions, returning null");
         return Ok(null!());
     }
 
     let mut result = eval(exprs, env, Box::new(Cont::Return))?;
+    info!("Initial evaluation result: {:?}", result);
+
     loop {
         match result {
             // 常规的 Bounce
             Trampoline::Bounce(val, env, k) => {
+                info!("Bounce: Processing value {:?}", val);
+
                 result = match val {
-                    Value::List(list) => match list.shift() {
-                        Some((car, cdr)) => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))),
-                        None => runtime_error!("Can't apply an empty list as a function"),
-                    },
-                    Value::Symbol(ref s) => k.run(
-                        // 先从 special form 找，然后是env 中的各种定义
-                        SPECIAL_FORMS
-                            .get(s.as_ref())
-                            .map(|sf| Value::SpecialForm(sf.clone()))
-                            .or_else(|| env.borrow().get(s))
-                            .ok_or_else(|| RuntimeError {
-                                message: format!("Identifier not found: {}", s),
-                            })?,
-                    )?,
-                    _ => k.run(val)?, // 其他的所有形式
+                    Value::List(list) => {
+                        info!("Processing list: {:?}", list);
+                        match list.shift() {
+                            Some((car, cdr)) => {
+                                info!("List car: {:?}, cdr: {:?}", car, cdr);
+                                Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))
+                            }
+                            None => {
+                                info!("Empty list application error");
+                                runtime_error!("Can't apply an empty list as a function")
+                            }
+                        }
+                    }
+                    Value::Symbol(ref s) => {
+                        info!("Processing symbol: {}", s);
+                        k.run(
+                            // 先从 special form 找，然后是env 中的各种定义
+                            SPECIAL_FORMS
+                                .get(s.as_ref())
+                                .map(|sf| Value::SpecialForm(sf.clone()))
+                                .or_else(|| env.borrow().get(s))
+                                .ok_or_else(|| RuntimeError {
+                                    message: format!("Identifier not found: {}", s),
+                                })?,
+                        )?
+                    }
+                    _ => {
+                        info!("Processing other value: {:?}", val);
+                        k.run(val)? // 其他的所有形式
+                    }
                 }
             }
 
@@ -879,7 +1022,7 @@ fn process(exprs: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
             }
 
             Trampoline::Run(val, k) => result = k.run(val)?, // Run 将 k 应用到 val 上
-            Trampoline::Return(val) => return Ok(val),       // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
+            Trampoline::Land(val) => return Ok(val),         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
         }
     }
 }
@@ -921,11 +1064,7 @@ mod test_trampoline {
         let env = Env::new_root().unwrap();
         let result = process(code, env).unwrap();
 
-        let expected = Value::from_vec(vec![
-            Value::Integer(1),
-            Value::Integer(2),
-            Value::Integer(3)
-        ]);
+        let expected = Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
 
         assert_eq!(result, expected);
     }
@@ -942,14 +1081,7 @@ mod test_trampoline {
         let code = parse_list("`(2 ,(+ 1 2) 4)");
         let env = Env::new_root().unwrap();
         let result = process(code, env).unwrap();
-        assert_eq!(
-            result,
-            Value::from_vec(vec![
-                Value::Integer(2),
-                Value::Integer(3),
-                Value::Integer(4)
-            ])
-        );
+        assert_eq!(result, Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
     }
     #[test]
     fn test_nested_quasiquote() {
@@ -970,10 +1102,10 @@ mod test_trampoline {
                 Value::from_vec(vec![
                     Value::Integer(2),
                     Value::Integer(3), // (+ 1 2) 的结果
-                    Value::Integer(7)  // (+ 3 4) 的结果
-                ])
+                    Value::Integer(7), // (+ 3 4) 的结果
+                ]),
             ]),
-            Value::Integer(5)
+            Value::Integer(5),
         ]);
 
         assert_eq!(result, expected);

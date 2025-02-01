@@ -19,6 +19,12 @@ pub enum Interpreter {
     Cps(cps::Interpreter),
 }
 
+pub fn parse_code(src: &str) -> Result<Vec<parser::Node>, String> {
+    let tokens = try_or_return_error!(lexer::tokenize(src));
+    let ast = try_or_return_error!(parser::parse(&tokens));
+    Ok(ast)
+}
+
 impl Interpreter {
     fn new(t: &str) -> Interpreter {
         match t {
