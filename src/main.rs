@@ -1,4 +1,4 @@
-use clap::{Arg, Command, Parser};
+use clap::Parser;
 use reedline::{DefaultPrompt, DefaultPromptSegment, FileBackedHistory, Reedline, Signal};
 use scheme::interpreter::interpreter::{self};
 use std::{fs::File, io::Read, path::Path};
@@ -6,7 +6,7 @@ use std::{fs::File, io::Read, path::Path};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
-use tracing::{info};
+use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "Scheme", about = "A Scheme interpreter")]
@@ -19,32 +19,47 @@ struct Args {
     file: Option<String>,
 
     /// Log file path
-    #[arg(short, long, default_value = "scheme.log")]
-    log_file: String,
+    #[arg(long)]
+    log_file: Option<String>,
+
+    /// evaluate expression
+    #[arg(short, long)]
+    eval: Option<String>,
 }
 
 fn main() {
     let args = Args::parse();
-
-    // Setup logging
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, "", &args.log_file);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true)
-        .with_thread_names(true)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_writer(file_appender)
-        .with_ansi(false);
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(file_layer)
-        .init();
+
+    let registry = tracing_subscriber::registry().with(env_filter);
+
+    // Only set up file logging if log_file is provided
+    if let Some(log_path) = args.log_file {
+        let file_appender = RollingFileAppender::new(Rotation::DAILY, "", &log_path);
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_file(true)
+            .with_line_number(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_span_events(FmtSpan::CLOSE)
+            .with_writer(file_appender)
+            .with_ansi(false);
+        registry.with(file_layer).init();
+    } else {
+        // If no log file specified, logs will effectively be discarded
+        registry.init();
+    }
 
     info!("Starting Scheme interpreter");
 
     let interpreter = interpreter::new(&args.mode);
+    if args.eval.is_some() {
+        match interpreter.execute(&args.eval.unwrap()) {
+            Ok(res) => println!("{}", res),
+            Err(e) => println!("Error: {}", e),
+        }
+        return;
+    }
 
     match args.file {
         Some(filename) => {
