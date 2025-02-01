@@ -56,7 +56,6 @@ pub enum Value {
     Procedure(Function),
     SpecialForm(SpecialForm),
     Macro(Vec<String>, Box<Value>),
-    #[serde(skip)]
     Cont(Box<Cont>),
 }
 
@@ -787,6 +786,228 @@ pub enum Cont {
     Return,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+enum SerializedCont {
+    EvalExpr {
+        rest: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    BeginFunc {
+        rest: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalFunc {
+        f: Value,
+        rest: List,
+        acc: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalIf {
+        if_expr: Value,
+        else_expr: Value,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalDef {
+        name: String,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalSet {
+        name: String,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalLet {
+        name: String,
+        rest: List,
+        body: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    ContinueQuasiquote {
+        rest: List,
+        acc: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    Eval {
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalApplyArgs {
+        args: Value,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    Apply {
+        f: Value,
+        next: Box<SerializedCont>,
+    },
+    EvalAnd {
+        rest: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    EvalOr {
+        rest: List,
+        env: SerializedEnv,
+        next: Box<SerializedCont>,
+    },
+    ExecCallCC {
+        next: Box<SerializedCont>,
+    },
+    Return,
+}
+
+impl Serialize for Cont {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let serialized = match self {
+            Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalFunc(f, rest, acc, env, next) => SerializedCont::EvalFunc {
+                f: f.clone(),
+                rest: rest.clone(),
+                acc: acc.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
+                if_expr: if_expr.clone(),
+                else_expr: else_expr.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
+                name: name.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
+                name: name.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalLet(name, rest, body, env, next) => SerializedCont::EvalLet {
+                name: name.clone(),
+                rest: rest.clone(),
+                body: body.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
+                rest: rest.clone(),
+                acc: acc.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Eval(env, next) => SerializedCont::Eval {
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
+                args: args.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Apply(f, next) => SerializedCont::Apply {
+                f: f.clone(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::ExecCallCC(next) => SerializedCont::ExecCallCC {
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Return => SerializedCont::Return,
+        };
+        serialized.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Cont {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let serialized = SerializedCont::deserialize(deserializer)?;
+        Ok(Self::from_serialized_cont(serialized))
+    }
+}
+
+#[cfg(test)]
+mod test_cond_serialization {
+    use super::*;
+
+    #[cfg(test)]
+    mod test_cont_serialization {
+        use super::*;
+
+        #[test]
+        fn test_serialize_complex_cont() {
+            let env = Env::new_root().unwrap();
+
+            let inner = Cont::Return;
+            assert_eq!(serde_json::to_string(&inner).unwrap(), r#"{"type":"Return"}"#);
+
+            let middle = Cont::EvalFunc(Value::Symbol("test".to_string()), List::Null, List::Null, env.clone(), Box::new(inner));
+            let outer = Cont::EvalExpr(List::Null, env.clone(), Box::new(middle));
+
+            let serialized = serde_json::to_string(&outer).unwrap();
+            let deserialized: Cont = serde_json::from_str(&serialized).unwrap();
+
+            // 验证基本结构
+            match deserialized {
+                Cont::EvalExpr(_, _, box_middle) => match *box_middle {
+                    Cont::EvalFunc(_, _, _, _, box_inner) => match *box_inner {
+                        Cont::Return => (),
+                        _ => panic!("Wrong inner continuation type"),
+                    },
+                    _ => panic!("Wrong middle continuation type"),
+                },
+                _ => panic!("Wrong outer continuation type"),
+            }
+        }
+    }
+}
+
 pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
@@ -1057,6 +1278,155 @@ impl Cont {
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
             Cont::Return => Ok(Trampoline::Land(val)),
+        }
+    }
+
+    fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
+        match &**cont {
+            Cont::EvalExpr(rest, env, next) => SerializedCont::EvalExpr {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::BeginFunc(rest, env, next) => SerializedCont::BeginFunc {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalFunc(f, rest, acc, env, next) => SerializedCont::EvalFunc {
+                f: f.clone(),
+                rest: rest.clone(),
+                acc: acc.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalIf(if_expr, else_expr, env, next) => SerializedCont::EvalIf {
+                if_expr: if_expr.clone(),
+                else_expr: else_expr.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalDef(name, env, next) => SerializedCont::EvalDef {
+                name: name.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalSet(name, env, next) => SerializedCont::EvalSet {
+                name: name.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalLet(name, rest, body, env, next) => SerializedCont::EvalLet {
+                name: name.clone(),
+                rest: rest.clone(),
+                body: body.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::ContinueQuasiquote(rest, acc, env, next) => SerializedCont::ContinueQuasiquote {
+                rest: rest.clone(),
+                acc: acc.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Eval(env, next) => SerializedCont::Eval {
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalApplyArgs(args, env, next) => SerializedCont::EvalApplyArgs {
+                args: args.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Apply(f, next) => SerializedCont::Apply {
+                f: f.clone(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalAnd(rest, env, next) => SerializedCont::EvalAnd {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::EvalOr(rest, env, next) => SerializedCont::EvalOr {
+                rest: rest.clone(),
+                env: env.borrow().to_serialized(),
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::ExecCallCC(next) => SerializedCont::ExecCallCC {
+                next: Box::new(Self::to_serialized_cont(next)),
+            },
+
+            Cont::Return => SerializedCont::Return,
+        }
+    }
+
+    fn from_serialized_cont(serialized: SerializedCont) -> Self {
+        match serialized {
+            SerializedCont::EvalExpr { rest, env, next } => {
+                Cont::EvalExpr(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::BeginFunc { rest, env, next } => {
+                Cont::BeginFunc(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::EvalFunc { f, rest, acc, env, next } => {
+                Cont::EvalFunc(f, rest, acc, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::EvalIf {
+                if_expr,
+                else_expr,
+                env,
+                next,
+            } => Cont::EvalIf(if_expr, else_expr, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
+
+            SerializedCont::EvalDef { name, env, next } => {
+                Cont::EvalDef(name, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::EvalSet { name, env, next } => {
+                Cont::EvalSet(name, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::EvalLet { name, rest, body, env, next } => {
+                Cont::EvalLet(name, rest, body, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::ContinueQuasiquote { rest, acc, env, next } => {
+                Cont::ContinueQuasiquote(rest, acc, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::Eval { env, next } => Cont::Eval(Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
+
+            SerializedCont::EvalApplyArgs { args, env, next } => {
+                Cont::EvalApplyArgs(args, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::Apply { f, next } => Cont::Apply(f, Box::new(Self::from_serialized_cont(*next))),
+
+            SerializedCont::EvalAnd { rest, env, next } => {
+                Cont::EvalAnd(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next)))
+            }
+
+            SerializedCont::EvalOr { rest, env, next } => Cont::EvalOr(rest, Env::from_serialized(env), Box::new(Self::from_serialized_cont(*next))),
+
+            SerializedCont::ExecCallCC { next } => Cont::ExecCallCC(Box::new(Self::from_serialized_cont(*next))),
+
+            SerializedCont::Return => Cont::Return,
         }
     }
 }
