@@ -8,9 +8,8 @@ use std::vec;
 
 use phf::phf_map;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
-use crate::interpreter::cps_json::{SerializedCont, SerializedEnv};
+use crate::interpreter::cps_json::SerializedEnv;
 use crate::match_list;
 
 #[derive(Debug)]
@@ -63,9 +62,13 @@ pub enum Value {
     String(String),
 
     List(List),
+
     Procedure(Function),
+
     SpecialForm(SpecialForm),
+
     Macro(Vec<String>, Box<Value>),
+
     Cont(Box<Cont>),
 }
 
@@ -354,7 +357,7 @@ pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
     Run(Value, Cont),
-    Land(Value),
+    Land(Value), // Land 是 不需要eavl 的，自己就是最终结果, 只对应 Cont::Return
 }
 
 impl fmt::Debug for Trampoline {
@@ -400,19 +403,42 @@ fn cont_special_macro(rest: List, arg_names: Vec<String>, body: Value, env: Rc<R
     Ok(Trampoline::Bounce(expanded, env, k)) // Finished expanding macro, now evaluate the code manually
 }
 
+/// define 的形式：
+/// 1. (define name value)
+///    (define x 42)
+/// 2. (define (name arg1 arg2 ...) body), 固定数量的参数。
+///
+///    (define (add x y)
+///      (+ x y))
+///
+///    (add 2 3) ; => 5
+/// 3. (define (name . args) body), 可变参数函数
+///
+///    (define (sum . numbers)
+///      (apply + numbers))
+///
+///    (sum 1 2 3 4) ; 返回 10
+///
+///    (define (sum x y . numbers)
+///      (* x y (apply + numbers)))
+///
+///    (sum 2 3 4 5) ; 返回 54
+///    (sum 1 2)     ; 返回 2
+///    (sum 3 4 1 2) ; 返回 21
 fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     let (car, cdr) = shift_or_error!(rest, "Must provide at least two arguments to define");
     match car {
-        Value::Symbol(name) => match_list!(cdr, [val] => Trampoline::Bounce(val, env.clone(), Cont::EvalDef(name, env, k))),
+        Value::Symbol(name) => match_list!(cdr, [val] => Trampoline::Bounce(val, env.clone(), Cont::EvalDef(name, env, k))), // 形式1
         Value::List(list) => {
+            // 形式2
             let (caar, cdar) = shift_or_error!(list, "Must provide at least two params in first argument of define");
-            let name = caar.into_symbol()?;
+            let fn_name = caar.into_symbol()?;
 
             let arg_names = cdar.into_iter().map(|v| v.into_symbol()).collect::<Result<Vec<String>, RuntimeError>>()?;
             let body = cdr;
-            let f = Function::Scheme(arg_names, body, env.clone());
 
-            env.borrow_mut().define(name, Value::Procedure(f))?;
+            env.borrow_mut()
+                .define(fn_name, Value::Procedure(Function::Scheme(arg_names, body, env.clone())))?;
             Ok(Trampoline::Run(null!(), *k))
         }
         _ => runtime_error!("Bad argument to define: {:?}", car),
@@ -435,17 +461,6 @@ fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tra
 
     let f = Function::Scheme(arg_names, body, env);
     Ok(Trampoline::Run(Value::Procedure(f), k))
-}
-
-fn cont_begin_fn(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
-        Value::SpecialForm(f) => cont_special(f, rest, env, k),
-        _ => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(val, cdr, List::Null, env, k))),
-            None => apply(val, List::Null, k),
-        },
-    }
 }
 
 fn cont_eval_fn(f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
@@ -531,9 +546,6 @@ fn cont_special_apply(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result
     match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k)))
 }
 
-fn cont_special_begin(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k)))
-}
 fn cont_special_and(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
         Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
@@ -568,8 +580,8 @@ fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> 
     }
 }
 
-fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match f {
+fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+    match sf {
         SpecialForm::If => cont_special_if(rest, env, k),
         SpecialForm::Define => cont_special_def(rest, env, k),
         SpecialForm::Set => cont_special_set(rest, env, k),
@@ -579,7 +591,7 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>)
         SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
         SpecialForm::Apply => cont_special_apply(rest, env, k),
-        SpecialForm::Begin => cont_special_begin(rest, env, k),
+        SpecialForm::Begin => match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
         SpecialForm::And => cont_special_and(rest, env, k),
         SpecialForm::Or => cont_special_or(rest, env, k),
         SpecialForm::CallCC => Ok(Trampoline::Bounce(rest.car()?, env, Cont::ExecCallCC(k))),
@@ -587,20 +599,22 @@ fn cont_special(f: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>)
     }
 }
 
-fn cont_eval_expr(val: Value, expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    info!("C/E eval {}", val);
-    match expr.is_empty() {
-        true => Ok(Trampoline::Run(val, *k)),
-        false => eval(expr, env, k),
-    }
-}
-
 impl Cont {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
-            Cont::EvalExpr(rest, env, k) => cont_eval_expr(val, rest, env, k),
+            Cont::EvalExpr(rest, env, k) => match rest.is_empty() {
+                true => Ok(Trampoline::Run(val, *k)),
+                false => eval(rest, env, k),
+            },
 
-            Cont::BeginFunc(rest, env, k) => cont_begin_fn(val, rest, env, k),
+            Cont::BeginFunc(rest, env, k) => match val {
+                Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
+                Value::SpecialForm(sf) => cont_special(sf, rest, env, k),
+                _ => match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(val, cdr, List::Null, env, k))),
+                    None => apply(val, List::Null, k),
+                },
+            },
             Cont::EvalFunc(f, rest, acc, env, k) => cont_eval_fn(f, val, rest, acc, env, k),
 
             Cont::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(val, if_expr, else_expr, env, *k),
@@ -617,6 +631,7 @@ impl Cont {
 
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
+
             Cont::Return => Ok(Trampoline::Land(val)),
         }
     }
@@ -678,12 +693,12 @@ static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
     "define-syntax-rule" => SpecialForm::DefineSyntaxRule,
 };
 
-fn process(exprs: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
-    if exprs.is_empty() {
+fn process(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
+    if expr.is_empty() {
         return Ok(null!());
     }
 
-    let mut result = eval(exprs, env, Box::new(Cont::Return))?;
+    let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
     loop {
         match result {
             // 常规的 Bounce
@@ -864,8 +879,8 @@ mod test_trampoline {
 
 #[derive(PartialEq)]
 pub struct Env {
-    parent: Option<Rc<RefCell<Env>>>,
-    values: HashMap<String, Value>,
+    pub parent: Option<Rc<RefCell<Env>>>,
+    pub values: HashMap<String, Value>,
 }
 
 impl fmt::Debug for Env {
@@ -981,16 +996,16 @@ impl Env {
         }
     }
 
-    pub fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
-        let parent = serialized.parent.map(|p| Env::from_serialized(*p));
-
-        let env = Env {
-            values: serialized.values,
-            parent,
-        };
-
-        Rc::new(RefCell::new(env))
-    }
+    // pub fn from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
+    //     let parent = serialized.parent.map(|p| Env::from_serialized(*p));
+    //
+    //     let env = Env {
+    //         values: serialized.values,
+    //         parent,
+    //     };
+    //
+    //     Rc::new(RefCell::new(env))
+    // }
 }
 
 fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {

@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::rc::Rc;
 
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
@@ -158,7 +160,7 @@ impl<'de> Deserialize<'de> for Function {
         let serialized = SerializedFunction::deserialize(deserializer)?;
         match serialized {
             SerializedFunction::Scheme { args, body, env } => {
-                let env = Env::from_serialized(env);
+                let env = env_from_serialized(env);
                 Ok(Function::Scheme(args, body, env))
             }
             SerializedFunction::Native(name) => {
@@ -268,6 +270,26 @@ mod test_special_form_serialization {
 pub struct SerializedEnv {
     pub parent: Option<Box<SerializedEnv>>,
     pub values: HashMap<String, Value>,
+}
+
+pub fn to_serialized_env(env: &Env) -> SerializedEnv {
+    let parent = env.parent.as_ref().map(|p| Box::new(p.borrow().to_serialized()));
+
+    SerializedEnv {
+        values: env.values.clone(),
+        parent,
+    }
+}
+
+pub fn env_from_serialized(serialized: SerializedEnv) -> Rc<RefCell<Env>> {
+    let parent = serialized.parent.map(|p| env_from_serialized(*p));
+
+    let env = Env {
+        values: serialized.values,
+        parent,
+    };
+
+    Rc::new(RefCell::new(env))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -440,32 +462,32 @@ pub fn to_serialized_cont(cont: &Box<Cont>) -> SerializedCont {
 
 pub fn from_serialized_cont(serialized: SerializedCont) -> Cont {
     match serialized {
-        SerializedCont::EvalExpr { rest, env, next } => Cont::EvalExpr(rest, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
-        SerializedCont::BeginFunc { rest, env, next } => Cont::BeginFunc(rest, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::EvalExpr { rest, env, next } => Cont::EvalExpr(rest, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::BeginFunc { rest, env, next } => Cont::BeginFunc(rest, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
         SerializedCont::EvalFunc { f, rest, acc, env, next } => {
-            Cont::EvalFunc(f, rest, acc, Env::from_serialized(env), Box::new(from_serialized_cont(*next)))
+            Cont::EvalFunc(f, rest, acc, env_from_serialized(env), Box::new(from_serialized_cont(*next)))
         }
         SerializedCont::EvalIf {
             if_expr,
             else_expr,
             env,
             next,
-        } => Cont::EvalIf(if_expr, else_expr, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
-        SerializedCont::EvalDef { name, env, next } => Cont::EvalDef(name, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
-        SerializedCont::EvalSet { name, env, next } => Cont::EvalSet(name, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
+        } => Cont::EvalIf(if_expr, else_expr, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::EvalDef { name, env, next } => Cont::EvalDef(name, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::EvalSet { name, env, next } => Cont::EvalSet(name, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
         SerializedCont::EvalLet { name, rest, body, env, next } => {
-            Cont::EvalLet(name, rest, body, Env::from_serialized(env), Box::new(from_serialized_cont(*next)))
+            Cont::EvalLet(name, rest, body, env_from_serialized(env), Box::new(from_serialized_cont(*next)))
         }
         SerializedCont::ContinueQuasiquote { rest, acc, env, next } => {
-            Cont::ContinueQuasiquote(rest, acc, Env::from_serialized(env), Box::new(from_serialized_cont(*next)))
+            Cont::ContinueQuasiquote(rest, acc, env_from_serialized(env), Box::new(from_serialized_cont(*next)))
         }
-        SerializedCont::Eval { env, next } => Cont::Eval(Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::Eval { env, next } => Cont::Eval(env_from_serialized(env), Box::new(from_serialized_cont(*next))),
         SerializedCont::EvalApplyArgs { args, env, next } => {
-            Cont::EvalApplyArgs(args, Env::from_serialized(env), Box::new(from_serialized_cont(*next)))
+            Cont::EvalApplyArgs(args, env_from_serialized(env), Box::new(from_serialized_cont(*next)))
         }
         SerializedCont::Apply { f, next } => Cont::Apply(f, Box::new(from_serialized_cont(*next))),
-        SerializedCont::EvalAnd { rest, env, next } => Cont::EvalAnd(rest, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
-        SerializedCont::EvalOr { rest, env, next } => Cont::EvalOr(rest, Env::from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::EvalAnd { rest, env, next } => Cont::EvalAnd(rest, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
+        SerializedCont::EvalOr { rest, env, next } => Cont::EvalOr(rest, env_from_serialized(env), Box::new(from_serialized_cont(*next))),
         SerializedCont::ExecCallCC { next } => Cont::ExecCallCC(Box::new(from_serialized_cont(*next))),
         SerializedCont::Return => Cont::Return,
     }
@@ -670,8 +692,8 @@ impl<'de> Deserialize<'de> for Trampoline {
         let serialized = SerializedTrampoline::deserialize(deserializer)?;
 
         Ok(match serialized {
-            SerializedTrampoline::Bounce { val, env, k } => Trampoline::Bounce(val, Env::from_serialized(env), k),
-            SerializedTrampoline::QuasiquoteBounce { val, env, k } => Trampoline::QuasiquoteBounce(val, Env::from_serialized(env), k),
+            SerializedTrampoline::Bounce { val, env, k } => Trampoline::Bounce(val, env_from_serialized(env), k),
+            SerializedTrampoline::QuasiquoteBounce { val, env, k } => Trampoline::QuasiquoteBounce(val, env_from_serialized(env), k),
             SerializedTrampoline::Run { val, k } => Trampoline::Run(val, k),
             SerializedTrampoline::Land { val } => Trampoline::Land(val),
         })
