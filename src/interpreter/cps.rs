@@ -884,6 +884,149 @@ fn process(exprs: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     }
 }
 
+#[cfg(test)]
+mod test_trampoline {
+    use super::*;
+    use crate::reader::{lexer, parser};
+
+    // 辅助函数：将 Scheme 代码转换为 List 结构
+    fn parse_list(code: &str) -> List {
+        let tokens = lexer::tokenize(code).unwrap();
+        let nodes = parser::parse(&tokens).unwrap();
+        List::from_nodes(&nodes)
+    }
+
+    #[test]
+    fn test_basic_bounce() {
+        // 测试基本的 Bounce: (+ 1 2)
+        // 期待执行过程:
+        // 1. Bounce(+, env, BeginFunc) - 解析符号 +
+        // 2. Run(proc+, BeginFunc) - 获得加法过程
+        // 3. Bounce(1, env, EvalFunc) - 评估第一个参数
+        // 4. Run(1, EvalFunc) - 得到参数值1
+        // 5. Bounce(2, env, EvalFunc) - 评估第二个参数
+        // 6. Run(2, EvalFunc) - 得到参数值2
+        // 7. Return(3) - 返回最终结果
+        let code = parse_list("(+ 1 2)");
+        let env = Env::new_root().unwrap();
+        let result = process(code, env).unwrap();
+        assert_eq!(result, Value::Integer(3));
+    }
+
+    #[test]
+    fn test_simple_quasiquote() {
+        // 测试基本的 quasiquote，不包含 unquote
+        // `(1 2 3)
+        let code = parse_list("`(1 2 3)");
+        let env = Env::new_root().unwrap();
+        let result = process(code, env).unwrap();
+
+        let expected = Value::from_vec(vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3)
+        ]);
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_quasiquote_bounce() {
+        // 测试 QuasiquoteBounce 处理 unquote: `(2 ,(+ 1 2) 4)
+        // 期待执行过程:
+        // 1. QuasiquoteBounce(2, env, ContinueQuasiquote) - 处理第一个元素
+        // 2. QuasiquoteBounce((unquote (+ 1 2)), env, ContinueQuasiquote) - 遇到 unquote
+        // 3. Bounce((+ 1 2), env, k) - 计算 unquote 表达式
+        // 4. QuasiquoteBounce(4, env, ContinueQuasiquote) - 处理最后元素
+        // 5. Return((2 3 4)) - 返回完整列表
+        let code = parse_list("`(2 ,(+ 1 2) 4)");
+        let env = Env::new_root().unwrap();
+        let result = process(code, env).unwrap();
+        assert_eq!(
+            result,
+            Value::from_vec(vec![
+                Value::Integer(2),
+                Value::Integer(3),
+                Value::Integer(4)
+            ])
+        );
+    }
+    #[test]
+    fn test_nested_quasiquote() {
+        // 测试嵌套的 quasiquote 和 unquote
+        // `(1 `(2 ,(+ 1 2) ,(+ 3 4)) 5)
+        // 在外层 quasiquote 中，内层的 quasiquote 会被保留，
+        // 但内层的 unquote 会被求值
+        let code = parse_list("`(1 `(2 ,(+ 1 2) ,(+ 3 4)) 5)");
+        let env = Env::new_root().unwrap();
+        let result = process(code, env).unwrap();
+
+        // 期待结果: (1 (quasiquote (2 3 7)) 5)
+        // 注意: 在外层 quasiquote 中，(+ 1 2) 和 (+ 3 4) 会被求值
+        let expected = Value::from_vec(vec![
+            Value::Integer(1),
+            Value::from_vec(vec![
+                Value::Symbol("quasiquote".to_string()),
+                Value::from_vec(vec![
+                    Value::Integer(2),
+                    Value::Integer(3), // (+ 1 2) 的结果
+                    Value::Integer(7)  // (+ 3 4) 的结果
+                ])
+            ]),
+            Value::Integer(5)
+        ]);
+
+        assert_eq!(result, expected);
+    }
+
+    // #[test]
+    // fn test_continuation() {
+    //     // 测试基本的 continuation
+    //     // (call/cc (lambda (k) (k 5)))
+    //     let code = parse_list("(call/cc (lambda (k) (k 5)))");
+    //     let env = Env::new_root().unwrap();
+    //     let result: Value = process(code, env).unwrap();
+    //     assert_eq!(result, Value::Integer(5));
+    // }
+
+    // #[test]
+    // fn test_complex_continuation() {
+    //     // 测试更复杂的 continuation 用例
+    //     // (+ 1 (call/cc (lambda (k) (k 5))))
+    //     let code = parse_list("(+ 1 (call/cc (lambda (k) (k 5))))");
+    //     let env = Env::new_root().unwrap();
+    //     let result: Value = process(code, env).unwrap();
+    //     assert_eq!(result, Value::Integer(6));
+    // }
+
+    #[test]
+    fn test_return_trampoline() {
+        // 测试 Return trampoline: 直接返回值
+        // 这是最简单的情况,比如字面量
+        let code = parse_list("42");
+        let env = Env::new_root().unwrap();
+        let result = process(code, env).unwrap();
+        assert_eq!(result, Value::Integer(42));
+    }
+
+    // #[test]
+    // fn test_complex_trampoline_flow() {
+    //     // 测试复杂的 trampoline 流程
+    //     // (let ((x 1))
+    //     //   (+ x (call/cc (lambda (k)
+    //     //                   (k (+ x 2))))))
+    //     let code = parse_list(
+    //         "(let ((x 1))
+    //            (+ x (call/cc (lambda (k)
+    //                            (k (+ x 2))))))
+    //         ",
+    //     );
+    //     let env = Env::new_root().unwrap();
+    //     let result = process(code, env).unwrap();
+    //     assert_eq!(result, Value::Integer(4));
+    // }
+}
+
 #[derive(PartialEq)]
 pub struct Env {
     parent: Option<Rc<RefCell<Env>>>,
