@@ -6,7 +6,6 @@ use std::{fs::File, io::Read, path::Path};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
-use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "Scheme", about = "A Scheme interpreter")]
@@ -39,8 +38,8 @@ fn main() {
         let file_layer = tracing_subscriber::fmt::layer()
             .with_file(true)
             .with_line_number(true)
-            .with_thread_ids(true)
-            .with_thread_names(true)
+            // .with_thread_ids(true)
+            // .with_thread_names(true)
             .with_span_events(FmtSpan::CLOSE)
             .with_writer(file_appender)
             .with_ansi(false);
@@ -49,8 +48,6 @@ fn main() {
         // If no log file specified, logs will effectively be discarded
         registry.init();
     }
-
-    info!("Starting Scheme interpreter");
 
     let interpreter = interpreter::new(&args.mode);
     if args.eval.is_some() {
