@@ -9,7 +9,7 @@ use std::vec;
 use phf::phf_map;
 use serde::{Deserialize, Serialize};
 
-use crate::match_list;
+use crate::{match_list, match_list_multi};
 
 #[derive(Debug)]
 pub struct RuntimeError {
@@ -697,10 +697,10 @@ fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
     loop {
         match result {
-            Trampoline::Bounce(val, env, k) => result = handle_bounce_val(val, env, k)?, // 常规的 Bounce
+            Trampoline::Bounce(val, env, k) => result = handle_bounce(val, env, k)?, // 常规的 Bounce
             Trampoline::QuasiquoteBounce(val, env, k) => result = handle_quasiquote_bounce(val, env, k)?, // quasiquote Bounce 模式
-            Trampoline::Run(val, k) => result = k.run(val)?,                             // Run 将 k 应用到 val 上
-            Trampoline::Land(val) => return Ok(val),                                     // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
+            Trampoline::Run(val, k) => result = k.run(val)?,                         // Run 将 k 应用到 val 上
+            Trampoline::Land(val) => return Ok(val),                                 // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
         }
     }
 }
@@ -708,21 +708,14 @@ fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
 // (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
 fn handle_quasiquote_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::List(list) => match list.shift() {
-            Some((car, cdr)) => match car {
+        Value::List(list) => match_list_multi!(list, {
+            [] => k.clone().run(null!()),
+            head: car, tail: cdr => match car {
                 Value::Symbol(s) if s == "unquote" => Ok(Trampoline::Bounce(cdr.car()?, env, k)),
                 _ => Ok(Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, List::Null, env, Box::new(k)))),
-            },
-            None => k.run(null!()),
-        },
+            }
+        })?,
         _ => k.run(val),
-    }
-}
-
-fn handle_bounce_list(list: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    match list.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))),
-        None => runtime_error!("Can't apply an empty list as a function"),
     }
 }
 
@@ -739,9 +732,9 @@ fn handle_bounce_symbol(s: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tr
     k.run(val)
 }
 
-fn handle_bounce_val(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+fn handle_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::List(list) => handle_bounce_list(list, env, k),   // 处理列表形式
+        Value::List(list) => match_list!(list, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))), // 处理列表形式
         Value::Symbol(ref s) => handle_bounce_symbol(s, env, k), // 处理符号形式
         _ => k.run(val),                                         // 处理其他所有形式
     }
@@ -890,7 +883,7 @@ mod test_trampoline {
 
         // 应该首先处理第一个元素 'a'
         match result {
-            Trampoline::QuasiquoteBounce(Value::Symbol(s), env2, Cont::ContinueQuasiquote(rest, acc, env3, k)) => {
+            Trampoline::QuasiquoteBounce(Value::Symbol(s), env2, Cont::ContinueQuasiquote(_rest, acc, env3, k)) => {
                 assert_eq!(s, "a");
                 assert_eq!(env2, env);
                 assert_eq!(env3, env);
@@ -910,9 +903,9 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::List(List::Null);
 
-        let result = handle_bounce_val(val, env, k);
+        let result = handle_bounce(val, env, k);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().message, "Can't apply an empty list as a function");
+        assert_eq!(result.unwrap_err().message, "Expected non-empty list");
     }
 
     #[test]
@@ -923,7 +916,7 @@ mod test_trampoline {
         // 构造列表 (+ 1 2)
         let val = Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]);
 
-        let result = handle_bounce_val(val, env.clone(), k).unwrap();
+        let result = handle_bounce(val, env.clone(), k).unwrap();
         match result {
             Trampoline::Bounce(car, env2, Cont::BeginFunc(cdr, env3, _)) => {
                 assert_eq!(car, Value::Symbol("+".to_string()));
@@ -941,7 +934,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("if".to_string());
 
-        let result = handle_bounce_val(val, env, k).unwrap();
+        let result = handle_bounce(val, env, k).unwrap();
         match result {
             // 当使用 Return continuation 时，会直接得到 Land
             Trampoline::Land(Value::SpecialForm(SpecialForm::If)) => (),
@@ -989,7 +982,7 @@ mod test_trampoline {
             Value::Integer(2),
         ]));
 
-        let result = handle_bounce_val(if_expr, env.clone(), Cont::Return).unwrap();
+        let result = handle_bounce(if_expr, env.clone(), Cont::Return).unwrap();
 
         // 验证第一步的结果是否正确
         match result {
@@ -1016,7 +1009,7 @@ mod test_trampoline {
 
         for form in special_forms {
             let val = Value::Symbol(form.to_string());
-            let result = handle_bounce_val(val.clone(), env.clone(), Cont::Return).unwrap();
+            let result = handle_bounce(val.clone(), env.clone(), Cont::Return).unwrap();
 
             match result {
                 Trampoline::Land(Value::SpecialForm(_)) => (),
@@ -1031,7 +1024,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("x".to_string());
 
-        let result = handle_bounce_val(val, env, k).unwrap();
+        let result = handle_bounce(val, env, k).unwrap();
         // Return continuation 会直接得到 Land
         match result {
             Trampoline::Land(Value::Integer(42)) => (),
@@ -1045,7 +1038,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("undefined".to_string());
 
-        let result = handle_bounce_val(val, env, k);
+        let result = handle_bounce(val, env, k);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().message, "Identifier not found: undefined");
     }
@@ -1056,7 +1049,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Integer(5);
 
-        let result = handle_bounce_val(val, env, k).unwrap();
+        let result = handle_bounce(val, env, k).unwrap();
         // Return continuation 会直接得到 Land
         match result {
             Trampoline::Land(Value::Integer(5)) => (),

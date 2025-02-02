@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use crate::interpreter::cps::{List, RuntimeError, Value};
 
 #[macro_export]
@@ -53,16 +54,67 @@ macro_rules! match_list {
     };
 }
 
+#[macro_export]
 macro_rules! match_list_multi {
+    // 单独处理只有空列表的情况
+    ($list:expr, {
+        [] => $expr:expr $(,)*
+    }) => {
+        match_list!($list, [] => $expr)
+    };
+
+    // 处理包含 head/tail 模式的情况
+    ($list:expr, {
+        [] => $empty_expr:expr,
+        head: $head:pat, tail: $tail:pat => $expr:expr $(,)*
+    }) => {{
+        let candidate = $list.clone();
+        let empty_result = match_list!(candidate.clone(), [] => $empty_expr);
+        if empty_result.is_ok() {
+            empty_result
+        } else {
+            match_list!(candidate, head: $head, tail: $tail => $expr)
+        }
+    }};
+
+    // 只有 head/tail 模式的情况
+    ($list:expr, {
+        head: $head:pat, tail: $tail:pat => $expr:expr $(,)*
+    }) => {
+        match_list!($list, head: $head, tail: $tail => $expr)
+    };
+
+    // 处理非空列表模式的情况
+    ($list:expr, {
+        [] => $empty_expr:expr,
+        $( [$($pat:tt)*] => $expr:expr ),+ $(,)*
+    }) => {{
+        let candidate = $list.clone();
+        let empty_result = match_list!(candidate.clone(), [] => $empty_expr);
+        if empty_result.is_ok() {
+            empty_result
+        } else {
+            let mut result: Result<_, RuntimeError> = Err(RuntimeError {
+                message: "No pattern matched".into(),
+            });
+            $(
+                if result.is_err() {
+                    result = match_list!(candidate.clone(), [$($pat)*] => $expr);
+                }
+            )+
+            result
+        }
+    }};
+
+    // 处理只有非空列表模式的情况
     ($list:expr, {
         $( [$($pat:tt)*] => $expr:expr ),+ $(,)*
     }) => {{
-        let candidate = $list.clone(); // 原列表
+        let candidate = $list.clone();
         let mut result: Result<_, RuntimeError> = Err(RuntimeError {
             message: "No pattern matched".into(),
         });
         $(
-            // 依次用 match_list! 尝试匹配
             if result.is_err() {
                 result = match_list!(candidate.clone(), [$($pat)*] => $expr);
             }
@@ -174,5 +226,64 @@ mod test_match_list {
             [Value::String(s)] => s.len() as i64
         });
         assert!(result3.is_err());
+    }
+
+    #[test]
+    fn test_match_scheme_with_empty() {
+        // 测试空列表
+        let empty_list = List::Null;
+        let result = match_list_multi!(empty_list, {
+            [] => 0,
+            [Value::Integer(x)] => x,
+            [Value::Integer(x), Value::Integer(y)] => x + y
+        });
+        assert_eq!(result.unwrap(), 0);
+
+        // 测试单个元素列表
+        let single_list = List::from_vec(vec![Value::Integer(1)]);
+        let result = match_list_multi!(single_list, {
+            [] => 0,
+            [Value::Integer(x)] => x,
+            [Value::Integer(x), Value::Integer(y)] => x + y
+        });
+        assert_eq!(result.unwrap(), 1);
+
+        // 测试双元素列表
+        let double_list = List::from_vec(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list_multi!(double_list, {
+            [] => 0,
+            [Value::Integer(x)] => x,
+            [Value::Integer(x), Value::Integer(y)] => x + y
+        });
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_match_scheme_without_empty() {
+        // 不包含空列表模式的测试
+        let list = List::from_vec(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list_multi!(list, {
+            [Value::Integer(x)] => x,
+            [Value::Integer(x), Value::Integer(y)] => x + y
+        });
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_match_scheme_with_head_tail() {
+        // 测试空列表和head/tail模式
+        let list = List::from_vec(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list_multi!(list, {
+            [] => 0,
+            head: Value::Integer(x), tail: _rest => x
+        });
+        assert_eq!(result.unwrap(), 1);
+
+        // 只有head/tail模式
+        let list = List::from_vec(vec![Value::Integer(1), Value::Integer(2)]);
+        let result = match_list_multi!(list, {
+            head: Value::Integer(x), tail: _rest => x
+        });
+        assert_eq!(result.unwrap(), 1);
     }
 }
