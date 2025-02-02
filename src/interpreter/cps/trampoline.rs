@@ -24,19 +24,25 @@ impl fmt::Debug for Trampoline {
     }
 }
 
-pub fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
-    if expr.is_empty() {
-        return Ok(null!());
-    }
-    let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
-    loop {
-        match result {
-            Trampoline::Bounce(val, env, k) => result = val.bounce(env, k)?, // 常规的 Bounce
-            Trampoline::QuasiquoteBounce(val, env, k) => result = val.quasiquote_bounce(env, k)?, // quasiquote Bounce 模式
-            Trampoline::Apply(val, k) => result = k.run(val)?,               // Run 将 k 应用到 val 上
-            Trampoline::Land(val) => return Ok(val),                         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
-        }
-    }
+// 定义 Trampoline trait
+pub trait Trampolinable {
+    /// 将自身转换为 Trampoline 形式
+    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+
+    /// 将自身转换为 QuasiquoteBounce 形式
+    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+}
+
+// Value 的实现
+impl Trampolinable for Value {
+    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_value(self, env, k) }
+    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(self, env, k) }
+}
+
+// List 的实现
+impl Trampolinable for List {
+    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_list(self, env, k) }
+    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(Value::List(self), env, k) }
 }
 
 // (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
@@ -60,7 +66,6 @@ pub fn bounce_symbol(s: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tramp
         .ok_or_else(|| RuntimeError {
             message: format!("Identifier not found: {}", s),
         })?;
-    // if => Value::SpecialForm(SpecialForm::If)
     k.run(val)
 }
 
@@ -75,24 +80,17 @@ pub fn bounce_value(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampo
         _ => k.run(val),                                  // 处理其他所有形式
     }
 }
-
-// 定义 Trampoline trait
-pub trait Trampolinable {
-    /// 将自身转换为 Trampoline 形式
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-
-    /// 将自身转换为 QuasiquoteBounce 形式
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-}
-
-// Value 的实现
-impl Trampolinable for Value {
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_value(self, env, k) }
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(self, env, k) }
-}
-
-// List 的实现
-impl Trampolinable for List {
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_list(self, env, k) }
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(Value::List(self), env, k) }
+pub fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
+    if expr.is_empty() {
+        return Ok(null!());
+    }
+    let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
+    loop {
+        match result {
+            Trampoline::Bounce(val, env, k) => result = val.bounce(env, k)?, // 常规的 Bounce
+            Trampoline::QuasiquoteBounce(val, env, k) => result = val.quasiquote_bounce(env, k)?, // quasiquote Bounce 模式
+            Trampoline::Apply(val, k) => result = k.run(val)?,               // Run 将 k 应用到 val 上
+            Trampoline::Land(val) => return Ok(val),                         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
+        }
+    }
 }
