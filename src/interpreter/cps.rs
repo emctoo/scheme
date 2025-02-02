@@ -356,7 +356,7 @@ pub enum Cont {
 pub enum Trampoline {
     Bounce(Value, Rc<RefCell<Env>>, Cont),
     QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
-    Run(Value, Cont),
+    Apply(Value, Cont),
     Land(Value), // Land 是 不需要eavl 的，自己就是最终结果, 只对应 Cont::Return
 }
 
@@ -365,9 +365,33 @@ impl fmt::Debug for Trampoline {
         match self {
             Trampoline::Bounce(val, _, k) => write!(f, "Bounce({:?}, env, {:?})", val, k),
             Trampoline::QuasiquoteBounce(val, _, k) => write!(f, "QuasiquoteBounce({:?}, env, {:?})", val, k),
-            Trampoline::Run(val, k) => write!(f, "Run({:?}, {:?})", val, k),
+            Trampoline::Apply(val, k) => write!(f, "Run({:?}, {:?})", val, k),
             Trampoline::Land(val) => write!(f, "Land({:?})", val),
         }
+    }
+}
+
+// 定义 Trampoline trait
+pub trait Trampolinable {
+    /// 将自身转换为 Trampoline 形式
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+
+    /// 将自身转换为 QuasiquoteBounce 形式
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+}
+
+// Value 的实现
+impl Trampolinable for Value {
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bounce(self, env, k) }
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_quasiquote_bounce(self, env, k) }
+}
+
+// List 的实现
+impl Trampolinable for List {
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bound_list(self, env, k) }
+
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+        Value::List(self).to_quasiquote_bounce(env, k)
     }
 }
 
@@ -383,7 +407,7 @@ fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -
             .collect::<Result<Vec<String>, RuntimeError>>()?;
 
         let _ = env.borrow_mut().define(name, Value::Macro(arg_names, Box::new(body)));
-        Trampoline::Run(null!(), k)
+        Trampoline::Apply(null!(), k)
     })
 }
 
@@ -439,7 +463,7 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
 
             env.borrow_mut()
                 .define(fn_name, Value::Procedure(Function::Scheme(arg_names, body, env.clone())))?;
-            Ok(Trampoline::Run(null!(), *k))
+            Ok(Trampoline::Apply(null!(), *k))
         }
         _ => runtime_error!("Bad argument to define: {:?}", car),
     }
@@ -447,7 +471,7 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
 
 fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     env.borrow_mut().define(name, val)?;
-    Ok(Trampoline::Run(null!(), k))
+    Ok(Trampoline::Apply(null!(), k))
 }
 
 fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
@@ -460,7 +484,7 @@ fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tra
         .collect::<Result<Vec<String>, RuntimeError>>()?;
 
     let f = Function::Scheme(arg_names, body, env);
-    Ok(Trampoline::Run(Value::Procedure(f), k))
+    Ok(Trampoline::Apply(Value::Procedure(f), k))
 }
 
 fn cont_eval_fn(f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
@@ -512,7 +536,7 @@ fn cont_special_set(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
 
 fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     env.borrow_mut().set(name, val)?;
-    Ok(Trampoline::Run(null!(), k))
+    Ok(Trampoline::Apply(null!(), k))
 }
 
 fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
@@ -520,10 +544,10 @@ fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> R
         match expr {
             Value::List(list) => match list.shift() {
                 Some((car, cdr)) => Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, List::Null, env, k)),
-                None => Trampoline::Run(null!(), *k),
+                None => Trampoline::Apply(null!(), *k),
             },
             // 其他类型的都用 cont 直接算
-            _ => Trampoline::Run(expr, *k),
+            _ => Trampoline::Apply(expr, *k),
         }
     })
 }
@@ -532,7 +556,7 @@ fn cont_continue_quasiquote(val: Value, rest: List, acc: List, env: Rc<RefCell<E
     let acc2 = acc.unshift(val);
     match rest.shift() {
         Some((car, cdr)) => Ok(Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, acc2, env, k))),
-        None => Ok(Trampoline::Run(acc2.reverse().into_list(), *k)),
+        None => Ok(Trampoline::Apply(acc2.reverse().into_list(), *k)),
     }
 }
 
@@ -543,16 +567,16 @@ fn cont_special_apply(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result
 fn cont_special_and(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
         Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
-        None => Ok(Trampoline::Run(Value::Boolean(true), *k)),
+        None => Ok(Trampoline::Apply(Value::Boolean(true), *k)),
     }
 }
 
 fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Boolean(false) => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        Value::Boolean(false) => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
         _ => match rest.shift() {
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
-            None => Ok(Trampoline::Run(val, *k)),
+            None => Ok(Trampoline::Apply(val, *k)),
         },
     }
 }
@@ -560,7 +584,7 @@ fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) ->
 fn cont_special_or(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match rest.shift() {
         Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
-        None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+        None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
     }
 }
 
@@ -568,9 +592,9 @@ fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> 
     match val {
         Value::Boolean(false) => match rest.shift() {
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
-            None => Ok(Trampoline::Run(Value::Boolean(false), *k)),
+            None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
         },
-        _ => Ok(Trampoline::Run(val, *k)),
+        _ => Ok(Trampoline::Apply(val, *k)),
     }
 }
 
@@ -583,7 +607,7 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
         SpecialForm::Set => cont_special_set(rest, env, k),
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
-        SpecialForm::Quote => Ok(Trampoline::Run(rest.car()?, *k)),
+        SpecialForm::Quote => Ok(Trampoline::Apply(rest.car()?, *k)),
         SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
         SpecialForm::Apply => cont_special_apply(rest, env, k),
@@ -599,7 +623,7 @@ impl Cont {
     fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
             Cont::EvalExpr(rest, env, k) => match rest.is_empty() {
-                true => Ok(Trampoline::Run(val, *k)),
+                true => Ok(Trampoline::Apply(val, *k)),
                 false => eval(rest, env, k),
             },
 
@@ -635,8 +659,8 @@ impl Cont {
 
 fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::Cont(c) => Ok(Trampoline::Run(args.into_list(), *c)),
-        Value::Procedure(Function::Native(f)) => Ok(Trampoline::Run(primitive(f, args)?, *k)),
+        Value::Cont(c) => Ok(Trampoline::Apply(args.into_list(), *c)),
+        Value::Procedure(Function::Native(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
         Value::Procedure(Function::Scheme(arg_names, body, env)) => {
             if arg_names.len() != args.len() {
                 runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
@@ -697,10 +721,10 @@ fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
     loop {
         match result {
-            Trampoline::Bounce(val, env, k) => result = handle_bounce(val, env, k)?, // 常规的 Bounce
-            Trampoline::QuasiquoteBounce(val, env, k) => result = handle_quasiquote_bounce(val, env, k)?, // quasiquote Bounce 模式
-            Trampoline::Run(val, k) => result = k.run(val)?,                         // Run 将 k 应用到 val 上
-            Trampoline::Land(val) => return Ok(val),                                 // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
+            Trampoline::Bounce(val, env, k) => result = val.to_trampoline(env, k)?, // 常规的 Bounce
+            Trampoline::QuasiquoteBounce(val, env, k) => result = val.to_quasiquote_bounce(env, k)?, // quasiquote Bounce 模式
+            Trampoline::Apply(val, k) => result = k.run(val)?,                      // Run 将 k 应用到 val 上
+            Trampoline::Land(val) => return Ok(val),                                // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
         }
     }
 }
@@ -732,9 +756,13 @@ fn handle_bounce_symbol(s: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tr
     k.run(val)
 }
 
+fn handle_bound_list(list: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+    match_list!(list, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))))
+}
+
 fn handle_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::List(list) => match_list!(list, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k)))), // 处理列表形式
+        Value::List(list) => handle_bound_list(list, env, k),    // 处理列表形式
         Value::Symbol(ref s) => handle_bounce_symbol(s, env, k), // 处理符号形式
         _ => k.run(val),                                         // 处理其他所有形式
     }

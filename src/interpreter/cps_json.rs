@@ -669,7 +669,7 @@ impl Serialize for Trampoline {
                 };
                 serialized.serialize(serializer)
             }
-            Trampoline::Run(val, k) => {
+            Trampoline::Apply(val, k) => {
                 let serialized = SerializedTrampoline::Run {
                     val: val.clone(),
                     k: k.clone(),
@@ -694,7 +694,7 @@ impl<'de> Deserialize<'de> for Trampoline {
         Ok(match serialized {
             SerializedTrampoline::Bounce { val, env, k } => Trampoline::Bounce(val, env_from_serialized(env), k),
             SerializedTrampoline::QuasiquoteBounce { val, env, k } => Trampoline::QuasiquoteBounce(val, env_from_serialized(env), k),
-            SerializedTrampoline::Run { val, k } => Trampoline::Run(val, k),
+            SerializedTrampoline::Run { val, k } => Trampoline::Apply(val, k),
             SerializedTrampoline::Land { val } => Trampoline::Land(val),
         })
     }
@@ -719,13 +719,13 @@ mod test_trampoline_serialization {
     #[test]
     fn test_serialize_run() {
         // let env = Env::new_root().unwrap();
-        let t = Trampoline::Run(Value::Integer(1), Cont::Return);
+        let t = Trampoline::Apply(Value::Integer(1), Cont::Return);
 
         let serialized = serde_json::to_string(&t).unwrap();
         let deserialized: Trampoline = serde_json::from_str(&serialized).unwrap();
 
         match deserialized {
-            Trampoline::Run(Value::Integer(n), Cont::Return) => {
+            Trampoline::Apply(Value::Integer(n), Cont::Return) => {
                 assert_eq!(n, 1);
             }
             _ => panic!("Wrong variant"),
