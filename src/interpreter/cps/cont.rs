@@ -176,13 +176,6 @@ fn cont_special_apply(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result
     match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k)))
 }
 
-fn cont_special_and(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
-        None => Ok(Trampoline::Apply(Value::Boolean(true), *k)),
-    }
-}
-
 fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Boolean(false) => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
@@ -190,13 +183,6 @@ fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) ->
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
             None => Ok(Trampoline::Apply(val, *k)),
         },
-    }
-}
-
-fn cont_special_or(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
-        None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
     }
 }
 
@@ -228,8 +214,17 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
         SpecialForm::Apply => cont_special_apply(rest, env, k),
         SpecialForm::Begin => match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
-        SpecialForm::And => cont_special_and(rest, env, k),
-        SpecialForm::Or => cont_special_or(rest, env, k),
+
+        SpecialForm::And => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
+            None => Ok(Trampoline::Apply(Value::Boolean(true), *k)),
+        },
+
+        SpecialForm::Or => match rest.shift() {
+            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
+            None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
+        },
+
         SpecialForm::CallCC => Ok(Trampoline::Bounce(rest.car()?, env, Cont::ExecCallCC(k))),
         SpecialForm::DefineSyntaxRule => cont_special_define_syntax_rule(rest, env, *k),
     }

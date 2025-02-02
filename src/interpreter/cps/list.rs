@@ -33,6 +33,8 @@ macro_rules! shift_or_error {
 }
 
 impl List {
+    pub fn new() -> List { List::Null }
+
     pub fn from_vec(src: Vec<Value>) -> List { src.iter().rfold(List::Null, |acc, val| List::Cell(Box::new(val.clone()), Box::new(acc))) }
 
     pub fn from_nodes(nodes: &[Node]) -> List { List::from_vec(nodes.iter().map(Value::from_node).collect()) }
