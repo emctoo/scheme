@@ -7,8 +7,8 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
+use crate::interpreter::cps::trampoline::Trampoline;
 use crate::interpreter::cps::{Cont, Env, List, Procedure, SpecialForm, Value};
-use crate::interpreter::cps_trampoline::Trampoline;
 
 impl Serialize for List {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

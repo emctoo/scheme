@@ -1,3 +1,8 @@
+pub mod json;
+pub mod matches;
+pub mod tests;
+pub mod trampoline;
+
 use crate::reader::parser::*;
 
 use std::cell::RefCell;
@@ -9,7 +14,7 @@ use std::vec;
 use phf::phf_map;
 use serde::{Deserialize, Serialize};
 
-use crate::interpreter::cps_trampoline::{eval_cps, Trampoline};
+use crate::interpreter::cps::trampoline::{eval_cps, Trampoline};
 use crate::match_list;
 
 #[derive(Debug)]

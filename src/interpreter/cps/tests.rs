@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
+
+use crate::interpreter::cps::trampoline::*;
 use crate::interpreter::cps::*;
-use crate::interpreter::cps_trampoline::*;
 use crate::null;
 
 #[cfg(test)]

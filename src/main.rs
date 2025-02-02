@@ -1,11 +1,12 @@
 use clap::Parser;
 use reedline::{DefaultPrompt, DefaultPromptSegment, FileBackedHistory, Reedline, Signal};
-use scheme::interpreter::interpreter::{self};
 use std::{fs::File, io::Read, path::Path};
 
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+
+use scheme::interpreter;
 
 #[derive(Parser)]
 #[command(name = "Scheme", about = "A Scheme interpreter")]

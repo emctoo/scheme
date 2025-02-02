@@ -1,5 +1,8 @@
-use crate::interpreter::ast_walk;
-use crate::interpreter::cps;
+pub mod ast_walk;
+pub mod cps;
+
+// use crate::interpreter::ast_walk;
+// use crate::interpreter::cps;
 use crate::reader::lexer;
 use crate::reader::parser;
 
