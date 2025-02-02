@@ -22,6 +22,16 @@ macro_rules! null {
     };
 }
 
+#[macro_export]
+macro_rules! shift_or_error {
+    ($list:expr, $($arg:tt)*) => (
+        match $list.shift() {
+            Some((car, cdr)) => Ok((car, cdr)),
+            None => Err(RuntimeError { message: format!($($arg)*)})
+        }?
+    )
+}
+
 impl List {
     pub fn from_vec(src: Vec<Value>) -> List { src.iter().rfold(List::Null, |acc, val| List::Cell(Box::new(val.clone()), Box::new(acc))) }
 

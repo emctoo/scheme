@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::interpreter::cps::trampoline::Trampoline;
-use crate::interpreter::cps::value::Value;
-use crate::interpreter::cps::{apply, eval, Env, List, Procedure, RuntimeError, SpecialForm};
+use crate::interpreter::cps::{primitive, Env, List, Procedure, RuntimeError, SpecialForm, Trampoline, Value};
 use crate::{match_list, null, runtime_error, shift_or_error};
 
 #[derive(PartialEq, Clone, Debug)]
@@ -107,16 +105,11 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
             let body = cdr;
 
             env.borrow_mut()
-                .define(fn_name, Value::Procedure(Procedure::Scheme(arg_names, body, env.clone())))?;
+                .define(fn_name, Value::Procedure(Procedure::UserPr(arg_names, body, env.clone())))?;
             Ok(Trampoline::Apply(null!(), *k))
         }
         _ => runtime_error!("Bad argument to define: {:?}", car),
     }
-}
-
-fn cont_eval_def(name: String, val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    env.borrow_mut().define(name, val)?;
-    Ok(Trampoline::Apply(null!(), k))
 }
 
 fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
@@ -128,16 +121,8 @@ fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tra
         .map(|v| v.into_symbol())
         .collect::<Result<Vec<String>, RuntimeError>>()?;
 
-    let f = Procedure::Scheme(arg_names, body, env);
+    let f = Procedure::UserPr(arg_names, body, env);
     Ok(Trampoline::Apply(Value::Procedure(f), k))
-}
-
-fn cont_eval_fn(f: Value, val: Value, rest: List, acc: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    let acc2 = acc.unshift(val);
-    match rest.shift() {
-        Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(f, cdr, acc2, env, k))),
-        None => apply(f, acc2.reverse(), k),
-    }
 }
 
 fn cont_special_let(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
@@ -164,24 +149,6 @@ fn cont_eval_let(name: String, value: Value, rest: List, body: List, env: Rc<Ref
         }),
         None => eval(body, Env::new_child(env), k),
     }
-}
-
-fn cont_eval_if(val: Value, if_expr: Value, else_expr: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, k)),
-        _ => Ok(Trampoline::Bounce(if_expr, env, k)),
-    }
-}
-
-fn cont_special_set(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, [name, val] => {
-        Trampoline::Bounce(val, env.clone(), Cont::EvalSet(name.into_symbol()?, env, k))
-    })
-}
-
-fn cont_eval_set(name: String, val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    env.borrow_mut().set(name, val)?;
-    Ok(Trampoline::Apply(null!(), k))
 }
 
 fn cont_special_quasiquote(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
@@ -249,7 +216,11 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
             match_list!(rest, [condition, if_expr, else_expr] => Trampoline::Bounce(condition, env.clone(), Cont::EvalIf(if_expr, else_expr, env, k)))
         }
         SpecialForm::Define => cont_special_def(rest, env, k),
-        SpecialForm::Set => cont_special_set(rest, env, k),
+
+        SpecialForm::Set => match_list!(rest, [name, val] => { // 求值，然后 set 到 env 中
+            Trampoline::Bounce(val, env.clone(), Cont::EvalSet(name.into_symbol()?, env, k))
+        }),
+
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
         SpecialForm::Quote => Ok(Trampoline::Apply(rest.car()?, *k)),
@@ -267,11 +238,13 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
 impl Cont {
     pub fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
         match self {
+            // eval list
             Cont::EvalExpr(rest, env, k) => match rest.is_empty() {
                 true => Ok(Trampoline::Apply(val, *k)),
                 false => eval(rest, env, k),
             },
 
+            // bounce list
             Cont::BeginFunc(rest, env, k) => match val {
                 Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
                 Value::SpecialForm(sf) => cont_special(sf, rest, env, k),
@@ -280,12 +253,35 @@ impl Cont {
                     None => apply(val, List::Null, k),
                 },
             },
-            Cont::EvalFunc(f, rest, acc, env, k) => cont_eval_fn(f, val, rest, acc, env, k),
 
-            Cont::EvalIf(if_expr, else_expr, env, k) => cont_eval_if(val, if_expr, else_expr, env, *k),
-            Cont::EvalDef(name, env, k) => cont_eval_def(name, val, env, *k),
-            Cont::EvalSet(name, env, k) => cont_eval_set(name, val, env, *k),
+            // 函数参数
+            Cont::EvalFunc(f, rest, acc, env, k) => {
+                let acc2 = acc.unshift(val);
+                match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(f, cdr, acc2, env, k))),
+                    None => apply(f, acc2.reverse(), k),
+                }
+            }
+
+            // if/else 情况都是 bounce 回去继续计算
+            Cont::EvalIf(if_expr, else_expr, env, k) => match val {
+                Value::Boolean(false) => Ok(Trampoline::Bounce(else_expr, env, *k)),
+                _ => Ok(Trampoline::Bounce(if_expr, env, *k)),
+            },
+
+            // (define name value), 创建一个新的绑定
+            Cont::EvalDef(name, env, k) => {
+                env.borrow_mut().define(name, val)?;
+                Ok(Trampoline::Apply(null!(), *k))
+            }
+
+            Cont::EvalSet(name, env, k) => {
+                env.borrow_mut().set(name, val)?;
+                Ok(Trampoline::Apply(null!(), *k))
+            }
+
             Cont::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
+
             Cont::ContinueQuasiquote(rest, acc, env, k) => cont_continue_quasiquote(val, rest, acc, env, k),
 
             Cont::Apply(f, k) => apply(f, val.into_list()?, k),
@@ -300,4 +296,29 @@ impl Cont {
             Cont::Return => Ok(Trampoline::Land(val)),
         }
     }
+}
+
+/// apply cont/procedure
+fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+    match val {
+        Value::Cont(c) => Ok(Trampoline::Apply(args.into_list(), *c)),
+
+        Value::Procedure(Procedure::NativePr(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
+        Value::Procedure(Procedure::UserPr(formals, body, env)) => {
+            if formals.len() != args.len() {
+                runtime_error!("Must supply exactly {} arguments to function: {:?}", formals.len(), args);
+            }
+            let proc_env = Env::new_child(env); // 创建一个新的 env，用于存放函数的参数
+            formals
+                .into_iter()
+                .zip(args)
+                .try_for_each(|(name, value)| proc_env.borrow_mut().define(name, value))?;
+            eval(body, Env::new_child(proc_env), k)
+        }
+        _ => runtime_error!("Don't know how to apply: {:?}", val),
+    }
+}
+
+pub fn eval(expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+    match_list!(expr, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k)))
 }

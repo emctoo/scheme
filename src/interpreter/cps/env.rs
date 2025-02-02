@@ -54,7 +54,7 @@ impl Env {
             "newline",
         ];
         for name in natives {
-            env.define(name.into(), Value::Procedure(Procedure::Native(name)))?;
+            env.define(name.into(), Value::Procedure(Procedure::NativePr(name)))?;
         }
         Ok(Rc::new(RefCell::new(env)))
     }

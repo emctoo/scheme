@@ -140,7 +140,7 @@ impl Serialize for Procedure {
         S: Serializer,
     {
         match self {
-            Procedure::Scheme(args, body, env) => {
+            Procedure::UserPr(args, body, env) => {
                 let serialized = SerializedFunction::Scheme {
                     args: args.clone(),
                     body: body.clone(),
@@ -148,7 +148,7 @@ impl Serialize for Procedure {
                 };
                 serialized.serialize(serializer)
             }
-            Procedure::Native(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
+            Procedure::NativePr(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
         }
     }
 }
@@ -162,7 +162,7 @@ impl<'de> Deserialize<'de> for Procedure {
         match serialized {
             SerializedFunction::Scheme { args, body, env } => {
                 let env = env_from_serialized(env);
-                Ok(Procedure::Scheme(args, body, env))
+                Ok(Procedure::UserPr(args, body, env))
             }
             SerializedFunction::Native(name) => {
                 // 通过字符串查找对应的静态字符串
@@ -171,7 +171,7 @@ impl<'de> Deserialize<'de> for Procedure {
                     .find(|&&func_name| func_name == name.as_str())
                     .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;
 
-                Ok(Procedure::Native(static_name))
+                Ok(Procedure::NativePr(static_name))
             }
         }
     }

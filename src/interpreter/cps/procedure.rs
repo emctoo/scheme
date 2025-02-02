@@ -10,15 +10,15 @@ use crate::{match_list, null, runtime_error};
 
 #[derive(Clone, PartialEq)]
 pub enum Procedure {
-    Scheme(Vec<String>, List, Rc<RefCell<Env>>),
-    Native(&'static str),
+    UserPr(Vec<String>, List, Rc<RefCell<Env>>),
+    NativePr(&'static str),
 }
 
 impl fmt::Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Procedure::Scheme(_, _, _) => write!(f, "#<procedure>"),
-            Procedure::Native(ref s) => write!(f, "#<procedure:{}>", s),
+            Procedure::UserPr(_, _, _) => write!(f, "#<procedure>"),
+            Procedure::NativePr(ref s) => write!(f, "#<procedure:{}>", s),
         }
     }
 }
