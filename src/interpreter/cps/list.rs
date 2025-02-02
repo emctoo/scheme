@@ -78,6 +78,10 @@ impl List {
     pub fn into_iter(self) -> ListIterator { ListIterator(self) }
 }
 
+impl Default for List {
+    fn default() -> Self { List::new() }
+}
+
 impl IntoIterator for List {
     type Item = Value;
     type IntoIter = vec::IntoIter<Value>;

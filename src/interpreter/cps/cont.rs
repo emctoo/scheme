@@ -172,30 +172,6 @@ fn cont_continue_quasiquote(val: Value, rest: List, acc: List, env: Rc<RefCell<E
     }
 }
 
-fn cont_special_apply(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k)))
-}
-
-fn cont_eval_and(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
-        _ => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
-            None => Ok(Trampoline::Apply(val, *k)),
-        },
-    }
-}
-
-fn cont_eval_or(val: Value, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::Boolean(false) => match rest.shift() {
-            Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
-            None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
-        },
-        _ => Ok(Trampoline::Apply(val, *k)),
-    }
-}
-
 fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match sf {
         SpecialForm::If => {
@@ -209,10 +185,12 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
 
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
+
         SpecialForm::Quote => Ok(Trampoline::Apply(rest.car()?, *k)),
         SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
+
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
-        SpecialForm::Apply => cont_special_apply(rest, env, k),
+        SpecialForm::Apply => match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k))),
         SpecialForm::Begin => match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
 
         SpecialForm::And => match rest.shift() {
@@ -282,8 +260,20 @@ impl Cont {
             Cont::Apply(f, k) => apply(f, val.into_list()?, k),
             Cont::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Cont(k.clone())), k),
 
-            Cont::EvalAnd(rest, env, k) => cont_eval_and(val, rest, env, k),
-            Cont::EvalOr(rest, env, k) => cont_eval_or(val, rest, env, k),
+            Cont::EvalAnd(rest, env, k) => match val {
+                Value::Boolean(false) => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
+                _ => match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
+                    None => Ok(Trampoline::Apply(val, *k)),
+                },
+            },
+            Cont::EvalOr(rest, env, k) => match val {
+                Value::Boolean(false) => match rest.shift() {
+                    Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
+                    None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
+                },
+                _ => Ok(Trampoline::Apply(val, *k)),
+            },
 
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
