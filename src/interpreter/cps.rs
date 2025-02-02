@@ -371,30 +371,6 @@ impl fmt::Debug for Trampoline {
     }
 }
 
-// 定义 Trampoline trait
-pub trait Trampolinable {
-    /// 将自身转换为 Trampoline 形式
-    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-
-    /// 将自身转换为 QuasiquoteBounce 形式
-    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-}
-
-// Value 的实现
-impl Trampolinable for Value {
-    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bounce(self, env, k) }
-    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_quasiquote_bounce(self, env, k) }
-}
-
-// List 的实现
-impl Trampolinable for List {
-    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bound_list(self, env, k) }
-
-    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-        Value::List(self).to_quasiquote_bounce(env, k)
-    }
-}
-
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match_list!(rest, [defn, body] => {
         let (name, arg_names_raw) = match defn.into_list()?.shift() {
@@ -729,16 +705,38 @@ fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
     }
 }
 
+// 定义 Trampoline trait
+pub trait Trampolinable {
+    /// 将自身转换为 Trampoline 形式
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+
+    /// 将自身转换为 QuasiquoteBounce 形式
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
+}
+
+// Value 的实现
+impl Trampolinable for Value {
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bounce(self, env, k) }
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_quasiquote_bounce(self, env, k) }
+}
+
+// List 的实现
+impl Trampolinable for List {
+    fn to_trampoline(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { handle_bound_list(self, env, k) }
+
+    fn to_quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
+        Value::List(self).to_quasiquote_bounce(env, k)
+    }
+}
+
 // (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
 fn handle_quasiquote_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match val {
-        Value::List(list) => match_list_multi!(list, {
-            [] => k.clone().run(null!()),
-            head: car, tail: cdr => match car {
-                Value::Symbol(s) if s == "unquote" => Ok(Trampoline::Bounce(cdr.car()?, env, k)),
-                _ => Ok(Trampoline::QuasiquoteBounce(car, env.clone(), Cont::ContinueQuasiquote(cdr, List::Null, env, Box::new(k)))),
-            }
-        })?,
+        Value::List(List::Null) => k.run(null!()),
+        Value::List(List::Cell(box Value::Symbol(s), cdr)) if s == "unquote" => Ok(Trampoline::Bounce(cdr.car()?, env, k)),
+        Value::List(List::Cell(car, cdr)) => {
+            Ok(Trampoline::QuasiquoteBounce(*car, env.clone(), Cont::ContinueQuasiquote(*cdr, List::Null, env, Box::new(k))))
+        }
         _ => k.run(val),
     }
 }
