@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use crate::interpreter::cps::*;
+use crate::interpreter::cps_trampoline::*;
 use crate::null;
 
 #[cfg(test)]
@@ -777,7 +778,7 @@ mod test_cps {
     fn test_native_fn_as_value() {
         // runTest + => #<procedure:+>
         let i = vec![Value::Symbol("+".to_string())];
-        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Function::Native("+")));
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Procedure::Native("+")));
     }
 
     #[test]

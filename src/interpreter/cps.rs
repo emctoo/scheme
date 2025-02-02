@@ -9,6 +9,7 @@ use std::vec;
 use phf::phf_map;
 use serde::{Deserialize, Serialize};
 
+use crate::interpreter::cps_trampoline::{eval_cps, Trampoline};
 use crate::match_list;
 
 #[derive(Debug)]
@@ -63,7 +64,7 @@ pub enum Value {
 
     List(List),
 
-    Procedure(Function),
+    Procedure(Procedure),
 
     SpecialForm(SpecialForm),
 
@@ -204,16 +205,16 @@ impl fmt::Debug for Value {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum Function {
+pub enum Procedure {
     Scheme(Vec<String>, List, Rc<RefCell<Env>>),
     Native(&'static str),
 }
 
-impl fmt::Debug for Function {
+impl fmt::Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Function::Scheme(_, _, _) => write!(f, "#<procedure>"),
-            Function::Native(ref s) => write!(f, "#<procedure:{}>", s),
+            Procedure::Scheme(_, _, _) => write!(f, "#<procedure>"),
+            Procedure::Native(ref s) => write!(f, "#<procedure:{}>", s),
         }
     }
 }
@@ -238,6 +239,24 @@ pub enum SpecialForm {
     DefineSyntaxRule,
 }
 
+pub static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
+    "if" => SpecialForm::If,
+    "define" => SpecialForm::Define,
+    "set!" => SpecialForm::Set,
+    "lambda" => SpecialForm::Lambda,
+    "λ" => SpecialForm::Lambda,
+    "let" => SpecialForm::Let,
+    "quote" => SpecialForm::Quote,
+    "quasiquote" => SpecialForm::Quasiquote,
+    "eval" => SpecialForm::Eval,
+    "apply" => SpecialForm::Apply,
+    "begin" => SpecialForm::Begin,
+    "and" => SpecialForm::And,
+    "or" => SpecialForm::Or,
+    "call/cc" => SpecialForm::CallCC,
+    "define-syntax-rule" => SpecialForm::DefineSyntaxRule,
+};
+
 #[derive(PartialEq, Clone)]
 pub enum List {
     Cell(Box<Value>, Box<List>),
@@ -257,10 +276,10 @@ impl List {
 
     pub fn from_nodes(nodes: &[Node]) -> List { List::from_vec(nodes.iter().map(Value::from_node).collect()) }
 
-    fn is_empty(&self) -> bool { self == &List::Null }
+    pub fn is_empty(&self) -> bool { self == &List::Null }
 
     /// (car cdr) -> car
-    fn car(self) -> Result<Value, RuntimeError> {
+    pub fn car(self) -> Result<Value, RuntimeError> {
         let (car, cdr) = shift_or_error!(self, "Expected list of length 1, but was empty");
         if !cdr.is_empty() {
             runtime_error!("Expected list of length 1, but it had more elements")
@@ -269,7 +288,7 @@ impl List {
     }
 
     /// Null => None, List => Some((car cdr)
-    fn shift(self) -> Option<(Value, List)> {
+    pub fn shift(self) -> Option<(Value, List)> {
         match self {
             List::Null => None,
             List::Cell(car, cdr) => Some((*car, *cdr)),
@@ -277,10 +296,10 @@ impl List {
     }
 
     /// car => (car self)
-    fn unshift(self, car: Value) -> List { List::Cell(Box::new(car), Box::new(self)) }
+    pub fn unshift(self, car: Value) -> List { List::Cell(Box::new(car), Box::new(self)) }
 
     /// list length
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             List::Cell(_, ref cdr) => 1 + cdr.len(),
             List::Null => 0,
@@ -354,25 +373,6 @@ pub enum Cont {
     Return,
 }
 
-#[derive(PartialEq, Clone)]
-pub enum Trampoline {
-    Bounce(Value, Rc<RefCell<Env>>, Cont),
-    QuasiquoteBounce(Value, Rc<RefCell<Env>>, Cont),
-    Apply(Value, Cont),
-    Land(Value), // Land 是 不需要eavl 的，自己就是最终结果, 只对应 Cont::Return
-}
-
-impl fmt::Debug for Trampoline {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Trampoline::Bounce(val, _, k) => write!(f, "Bounce({:?}, env, {:?})", val, k),
-            Trampoline::QuasiquoteBounce(val, _, k) => write!(f, "QuasiquoteBounce({:?}, env, {:?})", val, k),
-            Trampoline::Apply(val, k) => write!(f, "Run({:?}, {:?})", val, k),
-            Trampoline::Land(val) => write!(f, "Land({:?})", val),
-        }
-    }
-}
-
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     match_list!(rest, [defn, body] => {
         let (name, arg_names_raw) = match defn.into_list()?.shift() {
@@ -403,6 +403,14 @@ fn cont_special_macro(rest: List, arg_names: Vec<String>, body: Value, env: Rc<R
 
     let expanded = expand_macro(body, &substitutions); // Expand the macro
     Ok(Trampoline::Bounce(expanded, env, k)) // Finished expanding macro, now evaluate the code manually
+}
+
+fn expand_macro(expr: Value, substitutions: &HashMap<String, Value>) -> Value {
+    match expr {
+        Value::Symbol(s) => substitutions.get(&s).cloned().unwrap_or(Value::Symbol(s)),
+        Value::List(list) => Value::from_vec(list.into_iter().map(|val| expand_macro(val, substitutions)).collect()),
+        _ => expr,
+    }
 }
 
 /// define 的形式：
@@ -440,7 +448,7 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
             let body = cdr;
 
             env.borrow_mut()
-                .define(fn_name, Value::Procedure(Function::Scheme(arg_names, body, env.clone())))?;
+                .define(fn_name, Value::Procedure(Procedure::Scheme(arg_names, body, env.clone())))?;
             Ok(Trampoline::Apply(null!(), *k))
         }
         _ => runtime_error!("Bad argument to define: {:?}", car),
@@ -461,7 +469,7 @@ fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Tra
         .map(|v| v.into_symbol())
         .collect::<Result<Vec<String>, RuntimeError>>()?;
 
-    let f = Function::Scheme(arg_names, body, env);
+    let f = Procedure::Scheme(arg_names, body, env);
     Ok(Trampoline::Apply(Value::Procedure(f), k))
 }
 
@@ -638,8 +646,8 @@ impl Cont {
 fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match val {
         Value::Cont(c) => Ok(Trampoline::Apply(args.into_list(), *c)),
-        Value::Procedure(Function::Native(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
-        Value::Procedure(Function::Scheme(arg_names, body, env)) => {
+        Value::Procedure(Procedure::Native(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
+        Value::Procedure(Procedure::Scheme(arg_names, body, env)) => {
             if arg_names.len() != args.len() {
                 runtime_error!("Must supply exactly {} arguments to function: {:?}", arg_names.len(), args);
             }
@@ -658,108 +666,10 @@ fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeErro
     }
 }
 
-fn eval(expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+pub fn eval(expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     match_list!(expr, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k)))
 }
 
-fn expand_macro(expr: Value, substitutions: &HashMap<String, Value>) -> Value {
-    match expr {
-        Value::Symbol(s) => substitutions.get(&s).cloned().unwrap_or(Value::Symbol(s)),
-        Value::List(list) => Value::from_vec(list.into_iter().map(|val| expand_macro(val, substitutions)).collect()),
-        _ => expr,
-    }
-}
-
-static SPECIAL_FORMS: phf::Map<&'static str, SpecialForm> = phf_map! {
-    "if" => SpecialForm::If,
-    "define" => SpecialForm::Define,
-    "set!" => SpecialForm::Set,
-    "lambda" => SpecialForm::Lambda,
-    "λ" => SpecialForm::Lambda,
-    "let" => SpecialForm::Let,
-    "quote" => SpecialForm::Quote,
-    "quasiquote" => SpecialForm::Quasiquote,
-    "eval" => SpecialForm::Eval,
-    "apply" => SpecialForm::Apply,
-    "begin" => SpecialForm::Begin,
-    "and" => SpecialForm::And,
-    "or" => SpecialForm::Or,
-    "call/cc" => SpecialForm::CallCC,
-    "define-syntax-rule" => SpecialForm::DefineSyntaxRule,
-};
-
-pub fn eval_cps(expr: List, env: Rc<RefCell<Env>>) -> Result<Value, RuntimeError> {
-    if expr.is_empty() {
-        return Ok(null!());
-    }
-    let mut result = eval(expr, env, Box::new(Cont::Return))?; // repl 顶层的 cont 就是 Return
-    loop {
-        match result {
-            Trampoline::Bounce(val, env, k) => result = val.bounce(env, k)?, // 常规的 Bounce
-            Trampoline::QuasiquoteBounce(val, env, k) => result = val.quasiquote_bounce(env, k)?, // quasiquote Bounce 模式
-            Trampoline::Apply(val, k) => result = k.run(val)?,               // Run 将 k 应用到 val 上
-            Trampoline::Land(val) => return Ok(val),                         // Land 会返回给的值; 最早创建，也是最后的 Trampoline 求值
-        }
-    }
-}
-
-// (unquote x) 会直接转到 Bounce 模式，否则会继续 QuasiBounce
-pub fn quasiquote_bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::List(List::Null) => k.run(null!()),
-        Value::List(List::Cell(box Value::Symbol(s), cdr)) if s == "unquote" => Ok(Trampoline::Bounce(cdr.car()?, env, k)),
-        Value::List(List::Cell(car, cdr)) => {
-            Ok(Trampoline::QuasiquoteBounce(*car, env.clone(), Cont::ContinueQuasiquote(*cdr, List::Null, env, Box::new(k))))
-        }
-        _ => k.run(val),
-    }
-}
-
-pub fn bounce_symbol(s: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    // 先从 special form 找，然后是env 中的各种定义
-    let val: Value = SPECIAL_FORMS
-        .get(s.as_ref())
-        .map(|sf| Value::SpecialForm(sf.clone()))
-        .or_else(|| env.borrow().get(s))
-        .ok_or_else(|| RuntimeError {
-            message: format!("Identifier not found: {}", s),
-        })?;
-    // if => Value::SpecialForm(SpecialForm::If)
-    k.run(val)
-}
-
-fn bounce_list(list: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    match_list!(list, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))))
-}
-
-pub fn bounce_value(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    match val {
-        Value::List(list) => bounce_list(list, env, k),   // 处理列表形式
-        Value::Symbol(ref s) => bounce_symbol(s, env, k), // 处理符号形式
-        _ => k.run(val),                                  // 处理其他所有形式
-    }
-}
-
-// 定义 Trampoline trait
-pub trait Trampolinable {
-    /// 将自身转换为 Trampoline 形式
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-
-    /// 将自身转换为 QuasiquoteBounce 形式
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError>;
-}
-
-// Value 的实现
-impl Trampolinable for Value {
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_value(self, env, k) }
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(self, env, k) }
-}
-
-// List 的实现
-impl Trampolinable for List {
-    fn bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { bounce_list(self, env, k) }
-    fn quasiquote_bounce(self, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> { quasiquote_bounce(Value::List(self), env, k) }
-}
 #[derive(PartialEq)]
 pub struct Env {
     pub parent: Option<Rc<RefCell<Env>>>,
@@ -806,7 +716,7 @@ impl Env {
             "newline",
         ];
         for name in natives {
-            env.define(name.into(), Value::Procedure(Function::Native(name)))?;
+            env.define(name.into(), Value::Procedure(Procedure::Native(name)))?;
         }
         Ok(Rc::new(RefCell::new(env)))
     }
@@ -833,7 +743,7 @@ impl Env {
     }
 
     // Set a variable to a value, at any level in the env, or throw a runtime error if it isn't defined at all
-    fn set(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
+    pub fn set(&mut self, key: String, value: Value) -> Result<(), RuntimeError> {
         match self.values.contains_key(&key) {
             true => {
                 self.values.insert(key, value);
@@ -849,7 +759,7 @@ impl Env {
         }
     }
 
-    fn get(&self, key: &String) -> Option<Value> {
+    pub fn get(&self, key: &String) -> Option<Value> {
         match self.values.get(key) {
             Some(val) => Some(val.clone()),
             None => {
@@ -862,7 +772,7 @@ impl Env {
         }
     }
 
-    fn get_root(env_ref: Rc<RefCell<Env>>) -> Rc<RefCell<Env>> {
+    pub fn get_root(env_ref: Rc<RefCell<Env>>) -> Rc<RefCell<Env>> {
         let env = env_ref.borrow();
         match env.parent {
             Some(ref parent) => Env::get_root(parent.clone()),

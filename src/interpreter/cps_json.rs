@@ -7,7 +7,8 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
-use crate::interpreter::cps::{Cont, Env, Function, List, SpecialForm, Trampoline, Value};
+use crate::interpreter::cps::{Cont, Env, List, Procedure, SpecialForm, Value};
+use crate::interpreter::cps_trampoline::Trampoline;
 
 impl Serialize for List {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -133,13 +134,13 @@ const NATIVE_FUNCTIONS: &[&'static str] = &[
     "newline",
 ];
 
-impl Serialize for Function {
+impl Serialize for Procedure {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         match self {
-            Function::Scheme(args, body, env) => {
+            Procedure::Scheme(args, body, env) => {
                 let serialized = SerializedFunction::Scheme {
                     args: args.clone(),
                     body: body.clone(),
@@ -147,12 +148,12 @@ impl Serialize for Function {
                 };
                 serialized.serialize(serializer)
             }
-            Function::Native(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
+            Procedure::Native(name) => SerializedFunction::Native(name.to_string()).serialize(serializer),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for Function {
+impl<'de> Deserialize<'de> for Procedure {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -161,7 +162,7 @@ impl<'de> Deserialize<'de> for Function {
         match serialized {
             SerializedFunction::Scheme { args, body, env } => {
                 let env = env_from_serialized(env);
-                Ok(Function::Scheme(args, body, env))
+                Ok(Procedure::Scheme(args, body, env))
             }
             SerializedFunction::Native(name) => {
                 // 通过字符串查找对应的静态字符串
@@ -170,7 +171,7 @@ impl<'de> Deserialize<'de> for Function {
                     .find(|&&func_name| func_name == name.as_str())
                     .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;
 
-                Ok(Function::Native(static_name))
+                Ok(Procedure::Native(static_name))
             }
         }
     }
