@@ -96,3 +96,56 @@ https://www.gnu.org/software/guile/manual/html_node/Continuation_002dPassing-Sty
 https://ecraven.github.io/r7rs-benchmarks/
 
 (Write your own tiny programming system(s)!)[https://d3s.mff.cuni.cz/teaching/nprg077/]
+
+
+## scheme lang
+
+### and
+
+- and 表达式从左到右依次求值其参数。
+- 如果任何一个参数的值为 #f（false），and 表达式立即返回 #f，并停止求值后续参数（短路求值）。
+- 如果所有参数都不为 #f，and 表达式返回最后一个参数的值。
+- 如果没有参数，and 返回 #t（true）。
+
+```scheme
+(and #t 1 2) ; 返回 2，因为所有参数都为真，返回最后一个参数的值
+(and #t #f 2) ; 返回 #f，因为第二个参数为假，短路求值
+(and) ; 返回 #t，空 and 表达式返回真
+```
+
+### or
+- or 表达式从左到右依次求值其参数。
+- 如果任何一个参数的值不为 #f，or 表达式立即返回该参数的值，并停止求值后续参数（短路求值）。
+- 如果所有参数都为 #f，or 表达式返回 #f。
+- 如果没有参数，or 返回 #f。
+
+```scheme
+(or #f 1 2) ; 返回 1，因为第一个参数为假，继续求值第二个参数，返回第一个真值
+(or #f #f 2) ; 返回 2，因为第二个参数为假，继续求值第三个参数，返回第一个真值
+(or) ; 返回 #f，空 or 表达式返回假
+```
+
+### and/or 的实现
+
+`and` 和 `or` 通常被实现为特殊形式(special form)而不是原生函数(native function)，主要有以下几个原因：
+
+1. 短路求值 (Short-circuit evaluation):
+- `and` 在遇到第一个 false 值时就应该停止求值后续表达式
+- `or` 在遇到第一个非 false 值时就应该停止求值后续表达式
+
+如果实现为原生函数,所有参数都会被预先求值,无法实现短路效果。这可能导致:
+- 效率问题 - 不必要的计算
+- 正确性问题 - 可能执行本不该执行的副作用
+- 错误处理问题 - 可能抛出本可避免的错误
+
+例如:
+```scheme
+(and #f (error "不该执行"))  ; 应该返回 #f,不该抛错
+(or #t (error "不该执行"))   ; 应该返回 #t,不该抛错
+```
+
+2. 返回值处理:
+- `and` 要返回最后一个求值的表达式的值
+- `or` 要返回第一个非 false 值
+
+如果作为原生函数,无法获取到原始表达式,只能拿到求值后的结果,会失去这种语义。

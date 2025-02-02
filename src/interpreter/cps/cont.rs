@@ -191,6 +191,7 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
 
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
         SpecialForm::Apply => match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k))),
+
         SpecialForm::Begin => match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
 
         SpecialForm::And => match rest.shift() {
@@ -257,7 +258,6 @@ impl Cont {
 
             Cont::ContinueQuasiquote(rest, acc, env, k) => cont_continue_quasiquote(val, rest, acc, env, k),
 
-            Cont::Apply(f, k) => apply(f, val.into_list()?, k),
             Cont::ExecCallCC(k) => apply(val, List::Null.unshift(Value::Cont(k.clone())), k),
 
             Cont::EvalAnd(rest, env, k) => match val {
@@ -276,7 +276,9 @@ impl Cont {
             },
 
             Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
+
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
+            Cont::Apply(f, k) => apply(f, val.into_list()?, k),
 
             Cont::Return => Ok(Trampoline::Land(val)),
         }
