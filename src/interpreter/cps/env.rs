@@ -2,10 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
-use std::vec;
 
 use crate::interpreter::cps::value::Value;
-use crate::interpreter::cps::{Procedure, RuntimeError};
+use crate::interpreter::cps::{Procedure, RuntimeError, get_builtin_names};
 use crate::runtime_error;
 
 #[derive(PartialEq)]
@@ -30,30 +29,7 @@ impl Env {
             values: HashMap::new(),
         };
 
-        let natives = vec![
-            "+",
-            "-",
-            "*",
-            "/",
-            "<",
-            ">",
-            "=",
-            "null?",
-            "integer?",
-            "float?",
-            "list",
-            "car",
-            "cdr",
-            "cons",
-            "append",
-            "error",
-            "write",
-            "display",
-            "displayln",
-            "print",
-            "newline",
-        ];
-        for name in natives {
+        for name in get_builtin_names() {
             env.define(name.into(), Value::Procedure(Procedure::NativePr(name)))?;
         }
         Ok(Rc::new(RefCell::new(env)))

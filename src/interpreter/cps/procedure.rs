@@ -1,4 +1,6 @@
+use lazy_static::lazy_static;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -7,6 +9,51 @@ use crate::interpreter::cps::value::Value;
 use crate::interpreter::cps::{List, RuntimeError};
 
 use crate::{match_list, null, runtime_error};
+
+type BuiltinFn = fn(List) -> Result<Value, RuntimeError>;
+
+// 使用 lazy_static 来创建一个静态的 HashMap 存储所有内置函数
+lazy_static! {
+    static ref BUILTINS: HashMap<&'static str, BuiltinFn> = {
+        let mut m = HashMap::new();
+        m.insert("+", add as BuiltinFn);
+        m.insert("*", mul as BuiltinFn);
+        m.insert("-", sub as BuiltinFn);
+        m.insert("/", div as BuiltinFn);
+        m.insert("<", lt as BuiltinFn);
+        m.insert(">", gt as BuiltinFn);
+        m.insert("=", eq as BuiltinFn);
+        m.insert("null?", null_pred as BuiltinFn);
+        m.insert("integer?", integer_pred as BuiltinFn);
+        m.insert("float?", float_pred as BuiltinFn);
+        m.insert("list", list as BuiltinFn);
+        m.insert("car", car as BuiltinFn);
+        m.insert("cdr", cdr as BuiltinFn);
+        m.insert("cons", cons as BuiltinFn);
+        m.insert("append", append as BuiltinFn);
+        m.insert("error", error as BuiltinFn);
+        m.insert("write", write as BuiltinFn);
+        m.insert("display", display as BuiltinFn);
+        m.insert("displayln", displayln as BuiltinFn);
+        m.insert("print", print as BuiltinFn);
+        m.insert("env", env as BuiltinFn);
+        m.insert("newline", newline as BuiltinFn);
+        m.insert("pwd", current_working_directory as BuiltinFn);
+        m.insert("ls-dir", list_directory as BuiltinFn);
+        m
+    };
+}
+
+// 获取所有内置函数名称的函数
+pub fn get_builtin_names() -> Vec<&'static str> { BUILTINS.keys().cloned().collect() }
+
+// 修改后的 primitive 函数
+pub fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
+    match BUILTINS.get(f) {
+        Some(func) => func(args),
+        None => runtime_error!("Unknown primitive: {:?}", f),
+    }
+}
 
 #[derive(Clone, PartialEq)]
 pub enum Procedure {
@@ -22,6 +69,12 @@ impl fmt::Debug for Procedure {
         }
     }
 }
+
+fn list(args: List) -> Result<Value, RuntimeError> { Ok(args.into_list()) }
+
+fn add(args: List) -> Result<Value, RuntimeError> { args.into_iter().try_fold(Value::Integer(0), |acc, arg| acc + arg) }
+
+fn mul(args: List) -> Result<Value, RuntimeError> { args.into_iter().try_fold(Value::Integer(1), |acc, arg| acc * arg) }
 
 fn div(args: List) -> Result<Value, RuntimeError> {
     match args.len() {
@@ -213,29 +266,39 @@ fn newline(args: List) -> Result<Value, RuntimeError> {
     Ok(null!())
 }
 
-pub fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
-    match f {
-        "+" => args.into_iter().try_fold(Value::Integer(0), |acc, arg| acc + arg),
-        "*" => args.into_iter().try_fold(Value::Integer(1), |acc, arg| acc * arg),
-        "-" => sub(args),
-        "/" => div(args),
-        "<" => lt(args),
-        ">" => gt(args),
-        "=" => eq(args),
-        "null?" => null_pred(args),
-        "integer?" => integer_pred(args),
-        "float?" => float_pred(args),
-        "list" => Ok(args.into_list()),
-        "car" => car(args),
-        "cdr" => cdr(args),
-        "cons" => cons(args),
-        "append" => append(args),
-        "error" => error(args),
-        "write" => write(args),
-        "display" => display(args),
-        "displayln" => displayln(args),
-        "print" => print(args),
-        "newline" => newline(args),
-        _ => runtime_error!("Unknown primitive: {:?}", f),
+fn env(args: List) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        runtime_error!("Must supply exactly zero arguments to env: {:?}", args);
     }
+    Ok(Value::String("env".into()))
+}
+
+fn current_working_directory(args: List) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        runtime_error!("Must supply exactly zero arguments to pwd: {:?}", args);
+    }
+
+    let path = std::env::current_dir().map_err(|e| RuntimeError { message: e.to_string() })?;
+    let path = path.to_str().ok_or_else(|| RuntimeError {
+        message: "Path contains invalid UTF-8".to_string(),
+    })?;
+    Ok(Value::String(path.to_string()))
+}
+
+fn list_directory(args: List) -> Result<Value, RuntimeError> {
+    let path = if args.is_empty() { ".".into() } else { args.car()?.to_string() };
+
+    let full_path = std::fs::canonicalize(&path).map_err(|e| RuntimeError { message: e.to_string() })?;
+    let entries = std::fs::read_dir(full_path).map_err(|e| RuntimeError { message: e.to_string() })?;
+
+    let mut result = vec![];
+    for entry in entries {
+        let entry = entry.map_err(|e| RuntimeError { message: e.to_string() })?;
+        let path = entry.path();
+        let path = path.to_str().ok_or_else(|| RuntimeError {
+            message: "Path contains invalid UTF-8".to_string(),
+        })?;
+        result.push(Value::String(path.to_string()));
+    }
+    Ok(Value::List(List::from_vec(result)))
 }

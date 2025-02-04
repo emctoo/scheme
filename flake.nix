@@ -24,11 +24,10 @@
 
       perSystem = { lib, config, self', inputs', pkgs, system, ... }:
         let
-          overlays = [
-            (import rust-overlay)
-          ];
+          overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs { inherit system overlays; };
-          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          rustToolchain =
+            pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
           # include .md and .json files for the build
@@ -53,31 +52,22 @@
             nativeBuildInputs = with pkgs;
               [ pkg-config openssl python3 bzip2 ]
               ++ lib.optionals pkgs.stdenv.isLinux [ clang mold ];
-            # buildInputs = with pkgs; [ readline ];
           };
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in {
           devShells.default = pkgs.mkShell {
             inputsFrom = builtins.attrValues self.checks;
-            buildInputs = [
-              rustToolchain
-              pkgs.pkg-config
-              pkgs.openssl
-              pkgs.cargo-dist
-              pkgs.redis
-              pkgs.iredis
-              # pkgs.readline
-            ];
+            buildInputs =
+              [ rustToolchain pkgs.pkg-config pkgs.openssl pkgs.cargo-dist ];
             shellHook = ''
               export RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold"
-              # export LD_LIBRARY_PATH="${pkgs.readline}/lib:$LD_LIBRARY_PATH"
             '';
           };
 
           packages = {
             default = craneLib.buildPackage (commonArgs // {
-              pname = "ch";
+              pname = "scheme";
               inherit cargoArtifacts;
               # buildInputs = with pkgs; [ readline ];
             });

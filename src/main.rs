@@ -366,7 +366,7 @@ test!(comment1, "(define x 3)\n(define y 4)\n;(set! y 5)\n(+ x y); (+ x y)", "7"
 
 #[cfg(test)]
 mod tests {
-    use crate::interpreter;
+    use super::*;
 
     #[test]
     fn test_tail_call() {

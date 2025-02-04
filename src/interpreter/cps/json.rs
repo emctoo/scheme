@@ -7,8 +7,8 @@ use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
-use crate::interpreter::cps::trampoline::Trampoline;
-use crate::interpreter::cps::{Cont, Env, List, Procedure, SpecialForm, Value};
+use crate::interpreter::cps::{Cont, Env, List, Procedure, SpecialForm, Value,
+    get_builtin_names, Trampoline};
 
 impl Serialize for List {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -110,29 +110,6 @@ enum SerializedFunction {
     Scheme { args: Vec<String>, body: List, env: SerializedEnv },
     Native(String),
 }
-const NATIVE_FUNCTIONS: &[&'static str] = &[
-    "+",
-    "-",
-    "*",
-    "/",
-    "<",
-    ">",
-    "=",
-    "null?",
-    "integer?",
-    "float?",
-    "list",
-    "car",
-    "cdr",
-    "cons",
-    "append",
-    "error",
-    "write",
-    "display",
-    "displayln",
-    "print",
-    "newline",
-];
 
 impl Serialize for Procedure {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -166,7 +143,8 @@ impl<'de> Deserialize<'de> for Procedure {
             }
             SerializedFunction::Native(name) => {
                 // 通过字符串查找对应的静态字符串
-                let static_name = NATIVE_FUNCTIONS
+                let natives = get_builtin_names();
+                let static_name = natives
                     .iter()
                     .find(|&&func_name| func_name == name.as_str())
                     .ok_or_else(|| de::Error::custom(format!("Unknown native function: {}", name)))?;

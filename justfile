@@ -1,7 +1,7 @@
 _default:
   just --list
 
-watch:
+watch-test:
   watchexec -w . -e rs -r -c -- cargo test
 
 repl mode="cps":

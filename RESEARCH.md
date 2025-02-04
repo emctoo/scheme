@@ -1,4 +1,6 @@
-* Actual todo
+
+## Actual todo
+
 ** DONE See if I can get the tokenizer to return lifetime strs instead of Strings -> NOPE http://www.reddit.com/r/rust/comments/28waq4/how_do_i_create_and_return_a_str_dynamically/
 ** DONE Parse to AST!
 ** DONE Add functions
@@ -31,7 +33,8 @@
 ** TODO Bytecode VM (stack, or register based? -> stack is probably easier)
 ** TODO JIT
 
-* Unimplemented/maybe TODO
+## Unimplemented/maybe TODO
+
 ** TODO Floats
 ** TODO Ecaping doubles quotes and backslashes in strings
 ** TODO Restricting non-global defines? (seems like there's mixed implementations on this, but should at least be conistent)
@@ -51,7 +54,8 @@
 ** Python (CPython): no precompilation, compiles to bytecode on first run, VM & VM interpreter.
 ** PyPy: JIT'ed interpreter written in RPython.
 
-* Interpreters: My options
+## Interpreters: My options
+
 ** Static compilation (generate machine code statically)
 ** Vanilla interpreter
 ** Static JIT (generate machine code on first run)
@@ -63,7 +67,8 @@
 ** LLVM backend compiler
 ** Plan: do the non-machine code ones first (vanilla interpreter, bytecode + VM interpreter), then try static compilation, then static JITs, then tracing JITs? Or if it's too hard to do a full static compile, just do VM interpreter + tracing JIT, as that's probably the least amount of machine code.
 
-* Resources
+## Resources
+
 https://web.archive.org/web/20200212080133/http://home.pipeline.com/~hbaker1/
 http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html?m=1
 
@@ -149,3 +154,124 @@ https://ecraven.github.io/r7rs-benchmarks/
 - `or` 要返回第一个非 false 值
 
 如果作为原生函数,无法获取到原始表达式,只能拿到求值后的结果,会失去这种语义。
+
+## typed impl
+
+```rust
+#[derive(Clone)]
+pub struct TypedValue<S> {
+    value: Value,
+    _marker: PhantomData<S>
+}
+```
+
+`_marker: PhantomData<S>` 的作用是为了在类型系统中引入类型参数 S，而不实际使用这个参数存储任何数据。
+
+### 类型参数必须被使用
+
+在 Rust 中，如果你声明了一个类型参数但没有在类型定义中使用它，编译器会报错：
+
+```rust
+// 这样写会编译错误
+struct TypedValue<S> {
+    value: Value,  // S 没有被使用
+}
+```
+
+编译器会提示 "unused type parameter"，因为 S 虽然在类型名中声明了，但实际上并没有在结构体的字段中使用。
+
+### PhantomData 的作用
+
+PhantomData 是一个零大小的类型(zero-sized type)，它告诉编译器"我们在逻辑上使用了这个类型参数"：
+
+```rust
+struct TypedValue<S> {
+    value: Value,
+    _marker: PhantomData<S>  // 标记我们在逻辑上使用了 S
+}
+```
+
+### 为什么需要这样做？
+
+```rust
+// 不同的状态类型
+struct Evaluating;
+struct Applying;
+
+// TypedValue 用来标记值处于哪个状态
+let eval_value: TypedValue<Evaluating> = TypedValue::new(some_value);
+let apply_value: TypedValue<Applying> = TypedValue::new(other_value);
+
+// 编译器会阻止错误的状态转换
+fn process_evaluating(v: TypedValue<Evaluating>) { /* ... */ }
+
+process_evaluating(eval_value);   // OK
+process_evaluating(apply_value);  // 编译错误！
+```
+
+如果没有 `PhantomData`：
+
+- `TypedValue<Evaluating>` 和 `TypedValue<Applying>` 在运行时会是完全相同的类型
+- 编译器无法区分不同状态的值
+- 类型系统无法帮助我们捕获状态转换错误
+
+实际例子
+
+```rust
+// 定义状态类型
+struct Evaluating;
+struct Applying;
+
+struct TypedValue<S> {
+    value: Value,
+    _marker: PhantomData<S>
+}
+
+impl<S> TypedValue<S> {
+    // 通用方法，适用于所有状态
+    fn new(value: Value) -> Self {
+        Self {
+            value,
+            _marker: PhantomData
+        }
+    }
+}
+
+impl TypedValue<Evaluating> {
+    // 只有处于 Evaluating 状态的值才能调用这个方法
+    fn start_apply(self) -> TypedValue<Applying> {
+        TypedValue {
+            value: self.value,
+            _marker: PhantomData
+        }
+    }
+}
+
+// 使用示例
+let eval_value = TypedValue::<Evaluating>::new(some_value);
+let apply_value = eval_value.start_apply();  // OK
+// let wrong = eval_value.end_apply();       // 编译错误！
+```
+
+### 其他用途
+
+PhantomData 还可以用来：
+
+- 标记所有权关系
+- 表达变量的生命周期
+- 实现标记trait
+- 处理类型的变型(variance)
+
+```rust
+// 例如标记所有权
+struct Container<T> {
+    data: *mut T,
+    _owner: PhantomData<T>,  // 表明 Container 拥有 T 类型数据
+}
+```
+
+### 总结：
+
+- PhantomData 是一个在类型系统层面必要的工具
+- 它使得我们可以在不增加运行时开销的情况下使用类型参数
+- 在你的状态机设计中，它是实现类型级别状态检查的关键
