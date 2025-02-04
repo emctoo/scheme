@@ -37,8 +37,8 @@ fn main() {
     if let Some(log_path) = args.log_file {
         let file_appender = RollingFileAppender::new(Rotation::DAILY, "", &log_path);
         let file_layer = tracing_subscriber::fmt::layer()
-            .with_file(true)
-            .with_line_number(true)
+            // .with_file(true)
+            // .with_line_number(true)
             // .with_thread_ids(true)
             // .with_thread_names(true)
             .with_span_events(FmtSpan::CLOSE)

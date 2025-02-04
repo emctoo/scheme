@@ -54,7 +54,7 @@ impl List {
     pub fn shift(self) -> Option<(Value, List)> {
         match self {
             List::Null => None,
-            List::Cell(car, cdr) => Some((*car, *cdr)),
+            List::Cell(box car, box cdr) => Some((car, cdr)),
         }
     }
 

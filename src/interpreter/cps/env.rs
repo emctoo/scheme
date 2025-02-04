@@ -16,8 +16,8 @@ pub struct Env {
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.parent {
-            Some(ref parent) => write!(f, "{:?}, {:?}", self.values, parent.borrow()),
-            None => write!(f, "{:?} ", self.values),
+            Some(ref parent) => write!(f, "<Env {:?}>", parent.borrow()),
+            None => write!(f, "<Env>"),
         }
     }
 }

@@ -159,7 +159,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::List(List::Null);
 
-        let result = bounce_value(val, env, k);
+        let result = bounce(val, env, k);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().message, "Expected non-empty list");
     }
@@ -172,7 +172,7 @@ mod test_trampoline {
         // 构造列表 (+ 1 2)
         let val = Value::from_vec(vec![Value::Symbol("+".to_string()), Value::Integer(1), Value::Integer(2)]);
 
-        let result = bounce_value(val, env.clone(), k).unwrap();
+        let result = bounce(val, env.clone(), k).unwrap();
         match result {
             Trampoline::Bounce(car, env2, Cont::BeginFunc(cdr, env3, _)) => {
                 assert_eq!(car, Value::Symbol("+".to_string()));
@@ -190,7 +190,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("if".to_string());
 
-        let result = bounce_value(val, env, k).unwrap();
+        let result = bounce(val, env, k).unwrap();
         match result {
             // 当使用 Return continuation 时，会直接得到 Land
             Trampoline::Land(Value::SpecialForm(SpecialForm::If)) => (),
@@ -238,7 +238,7 @@ mod test_trampoline {
             Value::Integer(2),
         ]));
 
-        let result = bounce_value(if_expr, env.clone(), Cont::Return).unwrap();
+        let result = bounce(if_expr, env.clone(), Cont::Return).unwrap();
 
         // 验证第一步的结果是否正确
         match result {
@@ -265,7 +265,7 @@ mod test_trampoline {
 
         for form in special_forms {
             let val = Value::Symbol(form.to_string());
-            let result = bounce_value(val.clone(), env.clone(), Cont::Return).unwrap();
+            let result = bounce(val.clone(), env.clone(), Cont::Return).unwrap();
 
             match result {
                 Trampoline::Land(Value::SpecialForm(_)) => (),
@@ -280,7 +280,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("x".to_string());
 
-        let result = bounce_value(val, env, k).unwrap();
+        let result = bounce(val, env, k).unwrap();
         // Return continuation 会直接得到 Land
         match result {
             Trampoline::Land(Value::Integer(42)) => (),
@@ -294,7 +294,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Symbol("undefined".to_string());
 
-        let result = bounce_value(val, env, k);
+        let result = bounce(val, env, k);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().message, "Identifier not found: undefined");
     }
@@ -305,7 +305,7 @@ mod test_trampoline {
         let k = Cont::Return;
         let val = Value::Integer(5);
 
-        let result = bounce_value(val, env, k).unwrap();
+        let result = bounce(val, env, k).unwrap();
         // Return continuation 会直接得到 Land
         match result {
             Trampoline::Land(Value::Integer(5)) => (),
@@ -335,7 +335,7 @@ mod test_trampoline {
         // 7. Return(3) - 返回最终结果
         let code = parse_list("(+ 1 2)");
         let env = Env::new_root().unwrap();
-        let result = eval_cps(code, env).unwrap();
+        let result = cps(code, env).unwrap();
         assert_eq!(result, Value::Integer(3));
     }
 
@@ -345,7 +345,7 @@ mod test_trampoline {
         // `(1 2 3)
         let code = parse_list("`(1 2 3)");
         let env = Env::new_root().unwrap();
-        let result = eval_cps(code, env).unwrap();
+        let result = cps(code, env).unwrap();
 
         let expected = Value::from_vec(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
 
@@ -363,7 +363,7 @@ mod test_trampoline {
         // 5. Return((2 3 4)) - 返回完整列表
         let code = parse_list("`(2 ,(+ 1 2) 4)");
         let env = Env::new_root().unwrap();
-        let result = eval_cps(code, env).unwrap();
+        let result = cps(code, env).unwrap();
         assert_eq!(result, Value::from_vec(vec![Value::Integer(2), Value::Integer(3), Value::Integer(4)]));
     }
 
@@ -375,7 +375,7 @@ mod test_trampoline {
         // 但内层的 unquote 会被求值
         let code = parse_list("`(1 `(2 ,(+ 1 2) ,(+ 3 4)) 5)");
         let env = Env::new_root().unwrap();
-        let result = eval_cps(code, env).unwrap();
+        let result = cps(code, env).unwrap();
 
         // 期待结果: (1 (quasiquote (2 3 7)) 5)
         // 注意: 在外层 quasiquote 中，(+ 1 2) 和 (+ 3 4) 会被求值
@@ -421,7 +421,7 @@ mod test_trampoline {
         // 这是最简单的情况,比如字面量
         let code = parse_list("42");
         let env = Env::new_root().unwrap();
-        let result = eval_cps(code, env).unwrap();
+        let result = cps(code, env).unwrap();
         assert_eq!(result, Value::Integer(42));
     }
 
@@ -447,7 +447,7 @@ mod test_trampoline {
 mod test_cps {
     use super::*;
 
-    fn exec(list: List) -> Result<Value, RuntimeError> { eval_cps(list, Env::new_root()?) }
+    fn exec(list: List) -> Result<Value, RuntimeError> { cps(list, Env::new_root()?) }
 
     #[test]
     fn test_add1() {

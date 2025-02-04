@@ -65,7 +65,7 @@ impl fmt::Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Procedure::UserPr(_, _, _) => write!(f, "#<procedure>"),
-            Procedure::NativePr(ref s) => write!(f, "#<procedure:{}>", s),
+            Procedure::NativePr(ref s) => write!(f, "#<native procedure:{}>", s),
         }
     }
 }

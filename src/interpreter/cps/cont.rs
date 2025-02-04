@@ -1,33 +1,71 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
+
+use tracing::info;
 
 use crate::interpreter::cps::{primitive, Env, List, Procedure, RuntimeError, SpecialForm, Trampoline, Value};
 use crate::{match_list, null, runtime_error, shift_or_error};
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone)]
 pub enum Cont {
-    EvalExpr(List, Rc<RefCell<Env>>, Box<Cont>),
+    // 用于求值表达式列表中的剩余部分
+    EvalExpr(List, Rc<RefCell<Env>>, Box<Cont>), // rest表达式, 环境, 下一个continuation
 
-    BeginFunc(List, Rc<RefCell<Env>>, Box<Cont>),
-    EvalFunc(Value, List, List, Rc<RefCell<Env>>, Box<Cont>),
+    // 函数调用相关
+    BeginFunc(List, Rc<RefCell<Env>>, Box<Cont>),             // 函数参数列表, 环境, 下一个continuation
+    EvalFunc(Value, List, List, Rc<RefCell<Env>>, Box<Cont>), // 函数值, 剩余参数, 已累积参数, 环境, 下一个continuation
 
-    EvalIf(Value, Value, Rc<RefCell<Env>>, Box<Cont>),
-    EvalDef(String, Rc<RefCell<Env>>, Box<Cont>),
-    EvalSet(String, Rc<RefCell<Env>>, Box<Cont>),
-    EvalLet(String, List, List, Rc<RefCell<Env>>, Box<Cont>),
+    // 特殊形式求值
+    EvalIf(Value, Value, Rc<RefCell<Env>>, Box<Cont>), // if分支, else分支, 环境, 下一个continuation
+    EvalDef(String, Rc<RefCell<Env>>, Box<Cont>),      // 变量名, 环境, 下一个continuation
+    EvalSet(String, Rc<RefCell<Env>>, Box<Cont>),      // 变量名, 环境, 下一个continuation
+    EvalLet(String, List, List, Rc<RefCell<Env>>, Box<Cont>), // 变量名, 剩余绑定, body, let环境, 下一个continuation
 
-    ContinueQuasiquote(List, List, Rc<RefCell<Env>>, Box<Cont>),
+    // quasiquote 相关
+    ContinueQuasiquote(List, List, Rc<RefCell<Env>>, Box<Cont>), // 剩余表达式, 累积结果, 环境, 下一个continuation
 
-    Eval(Rc<RefCell<Env>>, Box<Cont>),
-    EvalApplyArgs(Value, Rc<RefCell<Env>>, Box<Cont>),
-    Apply(Value, Box<Cont>),
+    // eval/apply 相关
+    Eval(Rc<RefCell<Env>>, Box<Cont>),                 // 环境, 下一个continuation
+    EvalApplyArgs(Value, Rc<RefCell<Env>>, Box<Cont>), // apply的参数, 环境, 下一个continuation
+    Apply(Value, Box<Cont>),                           // 要应用的函数, 下一个continuation
 
-    EvalAnd(List, Rc<RefCell<Env>>, Box<Cont>),
-    EvalOr(List, Rc<RefCell<Env>>, Box<Cont>),
+    // and/or 逻辑运算
+    EvalAnd(List, Rc<RefCell<Env>>, Box<Cont>), // 剩余表达式, 环境, 下一个continuation
+    EvalOr(List, Rc<RefCell<Env>>, Box<Cont>),  // 剩余表达式, 环境, 下一个continuation
 
-    ExecCallCC(Box<Cont>),
-    Return,
+    // call/cc 相关
+    ExecCallCC(Box<Cont>), // 当前continuation
+    Return,                // 终止执行并返回值
+}
+
+impl fmt::Debug for Cont {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Cont::EvalExpr(expr, _, k) => write!(f, "<EvalExpr {} {:?}>", expr, k),
+            Cont::BeginFunc(expr, _, k) => write!(f, "<BeginFunc {} {:?}>", expr, k),
+            Cont::EvalFunc(Value::Procedure(Procedure::NativePr(name)), rest, acc, _env, k) => {
+                write!(f, "<EvalFunc native={} rest={} acc={} {:?}>", name, rest, acc, k)
+            }
+            Cont::EvalFunc(Value::Procedure(Procedure::UserPr(_, _, _)), rest, acc, _env, k) => {
+                write!(f, "<EvalFunc user rest={} acc={} {:?}>", rest, acc, k)
+            }
+            Cont::EvalFunc(..) => write!(f, "<EvalFunc>"),
+            Cont::EvalIf(if_expr, else_expr, _, k) => write!(f, "<EvalIf if_expr={} else_expr={} k={:?}>", if_expr, else_expr, k),
+            Cont::EvalDef(_, _, _) => write!(f, "<EvalDef>"),
+            Cont::EvalSet(_, _, _) => write!(f, "<EvalSet>"),
+            Cont::EvalLet(_, _, _, _, _) => write!(f, "<EvalLet>"),
+            Cont::ContinueQuasiquote(_, _, _, _) => write!(f, "<ContinueQuasiquote>"),
+            Cont::Eval(_, _) => write!(f, "<Eval>"),
+            Cont::EvalApplyArgs(_, _, _) => write!(f, "<EvalApplyArgs>"),
+            Cont::Apply(_, _) => write!(f, "<Apply>"),
+            Cont::EvalAnd(_, _, _) => write!(f, "<EvalAnd>"),
+            Cont::EvalOr(_, _, _) => write!(f, "<EvalOr>"),
+            Cont::ExecCallCC(_) => write!(f, "<ExecCallCC>"),
+            Cont::Return => write!(f, "<Return>"),
+        }
+    }
 }
 
 fn cont_special_define_syntax_rule(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
@@ -192,7 +230,7 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
         SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
         SpecialForm::Apply => match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k))),
 
-        SpecialForm::Begin => match_list!(rest, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
+        SpecialForm::Begin => eval(rest, env, k),
 
         SpecialForm::And => match rest.shift() {
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
@@ -211,6 +249,8 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
 
 impl Cont {
     pub fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
+        info!("Cont Run, k: {:?}, val: {}", self, val);
+
         match self {
             // eval list
             Cont::EvalExpr(rest, env, k) => match rest.is_empty() {
@@ -218,17 +258,20 @@ impl Cont {
                 false => eval(rest, env, k),
             },
 
-            // bounce list
+            // bounce list, list 应用形式，(fn ...). 可以是 macro, special form, procedure
             Cont::BeginFunc(rest, env, k) => match val {
                 Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
                 Value::SpecialForm(sf) => cont_special(sf, rest, env, k),
                 _ => match rest.shift() {
+                    // val 是函数（native/user), rest 函数的参数
+                    // 然后跳转到函数的求值
                     Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(val, cdr, List::Null, env, k))),
                     None => apply(val, List::Null, k),
                 },
             },
 
-            // 函数参数
+            // 函数调用
+            // 先依次对参数求值，放到 acc 中，然后 apply
             Cont::EvalFunc(f, rest, acc, env, k) => {
                 let acc2 = acc.unshift(val);
                 match rest.shift() {
@@ -307,5 +350,9 @@ fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeErro
 }
 
 pub fn eval(expr: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    match_list!(expr, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k)))
+    // match_list!(expr, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k)))
+    match expr {
+        List::Cell(box car, box cdr) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalExpr(cdr, env, k))),
+        _ => runtime_error!("Can't eval non-list: {:?}", expr),
+    }
 }

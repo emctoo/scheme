@@ -32,10 +32,6 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
-    pub fn new() -> Result<Interpreter, RuntimeError> {
-        let env = Env::new_root()?;
-        Ok(Interpreter { root: env })
-    }
-
-    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> { eval_cps(List::from_nodes(nodes), self.root.clone()) }
+    pub fn new() -> Result<Interpreter, RuntimeError> { Ok(Interpreter { root: Env::new_root()? }) }
+    pub fn run(&self, nodes: &[Node]) -> Result<Value, RuntimeError> { cps(List::from_nodes(nodes), self.root.clone()) }
 }

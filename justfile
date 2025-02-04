@@ -5,7 +5,7 @@ watch-test:
   watchexec -w . -e rs -r -c -- cargo test
 
 repl mode="cps":
-  cargo run -- --mode {{mode}}
+  cargo run -- --mode {{mode}} --log-file /tmp/scheme.log
 
 eval expr="(+ 1 2)":
   cargo run -- --mode cps --eval '{{expr}}' --log-file /tmp/scheme.log
