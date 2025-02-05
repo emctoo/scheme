@@ -4,7 +4,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::interpreter::cps::value::Value;
-use crate::interpreter::cps::{Procedure, RuntimeError, get_builtin_names};
+use crate::interpreter::cps::{get_builtin_names, Procedure, RuntimeError};
 use crate::runtime_error;
 
 #[derive(PartialEq)]

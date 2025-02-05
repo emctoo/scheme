@@ -8,6 +8,39 @@ use tracing::info;
 use crate::interpreter::cps::{primitive, Env, List, Procedure, RuntimeError, SpecialForm, Trampoline, Value};
 use crate::{match_list, null, runtime_error, shift_or_error};
 
+// (eval expression environment-specifier)
+//
+// 在指定的环境中求得并返回 expression 的值。
+// - expression 必须是一个以数据形式表示的有效的 Scheme 表达式，
+// - environment-specifier 必须是下面描述的三个过程之一
+//     (scheme-report-environment version)
+//     (null-environment version)
+//     (interaction-environment)
+//
+// Scheme 实现可以扩展 eval，以使其第一个参数支持非表达式的程序（定义），并允许其他值 作为环境传入，
+// 但扩展时必须保证，eval 不能在与 null-environment 或 scheme-report-environment 关联 的环境中创建新的绑定。
+//
+// (eval ’(* 7 3) (scheme-report-environment 5))
+// ; ⇒ 21
+//
+// (let ((f (eval ’(lambda (f x) (f x x))
+//                (null-environment 5))))
+//   (f + 10))
+// ; ⇒ 20
+
+// (apply proc arg1 . . . args)
+//
+// proc 必须是一个过程， args 必须是一个表。以表 (append (list arg1 . . . ) args) 中的元素为实参调用 proc。
+//
+// (apply + (list 3 4)) ; ⇒ 7
+//
+// (define compose
+//   (lambda (f g)
+//     (lambda args
+//       (f (apply g args)))))
+//
+// ((compose sqrt *) 12 75) ; ⇒ 30
+
 #[derive(PartialEq, Clone)]
 pub enum Cont {
     // 用于求值表达式列表中的剩余部分
@@ -27,7 +60,8 @@ pub enum Cont {
     ContinueQuasiquote(List, List, Rc<RefCell<Env>>, Box<Cont>), // 剩余表达式, 累积结果, 环境, 下一个continuation
 
     // eval/apply 相关
-    Eval(Rc<RefCell<Env>>, Box<Cont>),                 // 环境, 下一个continuation
+    Eval(Rc<RefCell<Env>>, Box<Cont>), // 环境, 下一个continuation
+
     EvalApplyArgs(Value, Rc<RefCell<Env>>, Box<Cont>), // apply的参数, 环境, 下一个continuation
     Apply(Value, Box<Cont>),                           // 要应用的函数, 下一个continuation
 
@@ -53,13 +87,13 @@ impl fmt::Debug for Cont {
             }
             Cont::EvalFunc(..) => write!(f, "<EvalFunc>"),
             Cont::EvalIf(if_expr, else_expr, _, k) => write!(f, "<EvalIf if_expr={} else_expr={} k={:?}>", if_expr, else_expr, k),
-            Cont::EvalDef(_, _, _) => write!(f, "<EvalDef>"),
-            Cont::EvalSet(_, _, _) => write!(f, "<EvalSet>"),
+            Cont::EvalDef(name, _, k) => write!(f, "<EvalDef {} {:?}>", name, k),
+            Cont::EvalSet(name, _, k) => write!(f, "<EvalSet {} {:?}>", name, k),
             Cont::EvalLet(_, _, _, _, _) => write!(f, "<EvalLet>"),
             Cont::ContinueQuasiquote(_, _, _, _) => write!(f, "<ContinueQuasiquote>"),
-            Cont::Eval(_, _) => write!(f, "<Eval>"),
-            Cont::EvalApplyArgs(_, _, _) => write!(f, "<EvalApplyArgs>"),
-            Cont::Apply(_, _) => write!(f, "<Apply>"),
+            Cont::Eval(_, k) => write!(f, "<Eval {:?}>", k),
+            Cont::EvalApplyArgs(args, _, k) => write!(f, "<EvalApplyArgs {} {:?}>", args, k),
+            Cont::Apply(pr, k) => write!(f, "<Apply {} {:?}>", pr, k),
             Cont::EvalAnd(_, _, _) => write!(f, "<EvalAnd>"),
             Cont::EvalOr(_, _, _) => write!(f, "<EvalOr>"),
             Cont::ExecCallCC(_) => write!(f, "<ExecCallCC>"),
@@ -211,15 +245,15 @@ fn cont_continue_quasiquote(val: Value, rest: List, acc: List, env: Rc<RefCell<E
 }
 
 fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
+    info!("SpecialForm / {:?} {:?}, k: {:?}", sf, rest, k);
     match sf {
+        SpecialForm::Begin => eval(rest, env, k),
+
         SpecialForm::If => {
-            match_list!(rest, [condition, if_expr, else_expr] => Trampoline::Bounce(condition, env.clone(), Cont::EvalIf(if_expr, else_expr, env, k)))
+            match_list!(rest, [cond, if_expr, else_expr] => Trampoline::Bounce(cond, env.clone(), Cont::EvalIf(if_expr, else_expr, env, k)))
         }
         SpecialForm::Define => cont_special_def(rest, env, k),
-
-        SpecialForm::Set => match_list!(rest, [name, val] => { // 求值，然后 set 到 env 中
-            Trampoline::Bounce(val, env.clone(), Cont::EvalSet(name.into_symbol()?, env, k))
-        }),
+        SpecialForm::Set => match_list!(rest, [name, val] => Trampoline::Bounce(val, env.clone(), Cont::EvalSet(name.into_symbol()?, env, k))),
 
         SpecialForm::Lambda => cont_special_lambda(rest, env, *k),
         SpecialForm::Let => cont_special_let(rest, env, k),
@@ -227,16 +261,14 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
         SpecialForm::Quote => Ok(Trampoline::Apply(rest.car()?, *k)),
         SpecialForm::Quasiquote => cont_special_quasiquote(rest, env, k),
 
-        SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))),
-        SpecialForm::Apply => match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k))),
+        SpecialForm::Eval => Ok(Trampoline::Bounce(rest.car()?, env.clone(), Cont::Eval(env, k))), // 2nd env parameter is not allowed for now
 
-        SpecialForm::Begin => eval(rest, env, k),
+        SpecialForm::Apply => match_list!(rest, [f, args] => Trampoline::Bounce(f, env.clone(), Cont::EvalApplyArgs(args, env, k))),
 
         SpecialForm::And => match rest.shift() {
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalAnd(cdr, env, k))),
             None => Ok(Trampoline::Apply(Value::Boolean(true), *k)),
         },
-
         SpecialForm::Or => match rest.shift() {
             Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalOr(cdr, env, k))),
             None => Ok(Trampoline::Apply(Value::Boolean(false), *k)),
@@ -249,7 +281,7 @@ fn cont_special(sf: SpecialForm, rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>
 
 impl Cont {
     pub fn run(self, val: Value) -> Result<Trampoline, RuntimeError> {
-        info!("Cont Run, k: {:?}, val: {}", self, val);
+        info!("Cont::run, k: {:?}, val: {}", self, val);
 
         match self {
             // eval list
@@ -261,7 +293,12 @@ impl Cont {
             // bounce list, list 应用形式，(fn ...). 可以是 macro, special form, procedure
             Cont::BeginFunc(rest, env, k) => match val {
                 Value::Macro(arg_names, body) => cont_special_macro(rest, arg_names, *body, env, *k),
-                Value::SpecialForm(sf) => cont_special(sf, rest, env, k),
+                Value::SpecialForm(sf) => {
+                    let result = cont_special(sf, rest, env, k);
+                    info!("SpecialForm / => {:?}", result);
+                    result
+                }
+
                 _ => match rest.shift() {
                     // val 是函数（native/user), rest 函数的参数
                     // 然后跳转到函数的求值
@@ -318,7 +355,7 @@ impl Cont {
                 _ => Ok(Trampoline::Apply(val, *k)),
             },
 
-            Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)),
+            Cont::Eval(env, k) => Ok(Trampoline::Bounce(val, Env::get_root(env), *k)), // env replaced
 
             Cont::EvalApplyArgs(args, env, k) => Ok(Trampoline::Bounce(args, env, Cont::Apply(val, k))),
             Cont::Apply(f, k) => apply(f, val.into_list()?, k),

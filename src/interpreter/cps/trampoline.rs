@@ -47,17 +47,16 @@ pub fn bounce_symbol(symbol: &String, env: Rc<RefCell<Env>>, k: Cont) -> Result<
         .ok_or_else(|| RuntimeError {
             message: format!("Identifier not found: {}", symbol),
         })?;
-    let val_clone = val.clone();
-    let k_clone = k.clone();
+    info!("bounce symbol / {}, k: {:?}, val {}", symbol, k.clone(), val.clone());
     let result = k.run(val);
-    info!("bounce symbol / {}, k: {:?}, val {} => {:?}", symbol, k_clone, val_clone, result);
+    info!("bounce symbol / {}, => {:?}", symbol, result);
     result
 }
 
 fn bounce_list(list: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
-    let expr = list.clone();
+    info!("bounce list / {}, k: {:?}", list.clone(), k);
     let result = match_list!(list, head: car, tail: cdr => Trampoline::Bounce(car, env.clone(), Cont::BeginFunc(cdr, env, Box::new(k))));
-    info!("bounce list / {} => {:?}", expr, result);
+    info!("bounce list / => {:?}", result);
     result
 }
 
@@ -67,10 +66,10 @@ pub fn bounce(val: Value, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, 
         Value::Symbol(ref s) => bounce_symbol(s, env, k), // 处理符号形式
         _ => {
             // 处理其他所有形式
-            let k_clone = k.clone();
-            let val_clone = val.clone();
-            info!("bounce other / k: {:?}, val: {:?}", k_clone, val_clone);
-            k.run(val)
+            info!("bounce _ / k: {:?}, val: {:?}", k.clone(), val.clone());
+            let result = k.run(val);
+            info!("bounce _ / => {:?}", result);
+            result
         }
     }
 }
