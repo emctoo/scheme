@@ -1,9 +1,17 @@
 use clap::Parser;
 use reedline::{DefaultPrompt, DefaultPromptSegment, FileBackedHistory, Reedline, Signal};
+use std::fmt;
 use std::{fs::File, io::Read, path::Path};
 
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_core::{Event, Subscriber};
+use tracing_subscriber::fmt::format;
+use tracing_subscriber::fmt::{
+    format::{FormatEvent, FormatFields},
+    FmtContext,
+};
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 use scheme::interpreter;
@@ -27,6 +35,22 @@ struct Args {
     eval: Option<String>,
 }
 
+struct MyFormatter;
+
+impl<S, N> FormatEvent<S, N> for MyFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(&self, ctx: &FmtContext<'_, S, N>, mut writer: format::Writer<'_>, event: &Event<'_>) -> fmt::Result {
+        let metadata = event.metadata();
+        let file_name = metadata.file().unwrap().split('/').next_back().unwrap();
+        write!(&mut writer, "{} {:>16} {:>4} ", metadata.level(), file_name, metadata.line().unwrap())?;
+        ctx.field_format().format_fields(writer.by_ref(), event)?; // write fields on the event
+        writeln!(writer)
+    }
+}
+
 fn main() {
     let args = Args::parse();
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -37,17 +61,14 @@ fn main() {
     if let Some(log_path) = args.log_file {
         let file_appender = RollingFileAppender::new(Rotation::DAILY, "", &log_path);
         let file_layer = tracing_subscriber::fmt::layer()
-            // .with_file(true)
-            // .with_line_number(true)
-            // .with_thread_ids(true)
-            // .with_thread_names(true)
             .with_span_events(FmtSpan::CLOSE)
             .with_writer(file_appender)
-            .with_ansi(false);
+            .with_ansi(false)
+            .with_timer(tracing_subscriber::fmt::time::ChronoUtc::rfc_3339())
+            .event_format(MyFormatter);
         registry.with(file_layer).init();
     } else {
-        // If no log file specified, logs will effectively be discarded
-        registry.init();
+        registry.init(); // If no log file specified, logs will effectively be discarded
     }
 
     let interpreter = interpreter::new(&args.mode);
@@ -88,7 +109,7 @@ fn repl(interpreter: interpreter::Interpreter) {
                     .unwrap_or_else(|e| println!("Executing error: {}", e));
             }
             Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
-                println!("\n- Bye.");
+                println!("\n- bye.");
                 break;
             }
             x => {

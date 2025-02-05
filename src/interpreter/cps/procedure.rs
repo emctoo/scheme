@@ -57,15 +57,15 @@ pub fn primitive(f: &'static str, args: List) -> Result<Value, RuntimeError> {
 
 #[derive(Clone, PartialEq)]
 pub enum Procedure {
-    UserPr(Vec<String>, List, Rc<RefCell<Env>>),
-    NativePr(&'static str),
+    User(Vec<String>, List, Rc<RefCell<Env>>), // formals, body, env
+    Native(&'static str),
 }
 
 impl fmt::Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Procedure::UserPr(_, _, _) => write!(f, "#<procedure>"),
-            Procedure::NativePr(ref s) => write!(f, "#<native procedure:{}>", s),
+            Procedure::User(_, _, _) => write!(f, "#<procedure>"),
+            Procedure::Native(ref s) => write!(f, "#<native procedure:{}>", s),
         }
     }
 }

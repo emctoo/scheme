@@ -30,7 +30,7 @@ impl Env {
         };
 
         for name in get_builtin_names() {
-            env.define(name.into(), Value::Procedure(Procedure::NativePr(name)))?;
+            env.define(name.into(), Value::Procedure(Procedure::Native(name)))?;
         }
         Ok(Rc::new(RefCell::new(env)))
     }

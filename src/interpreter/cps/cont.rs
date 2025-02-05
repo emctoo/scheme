@@ -79,10 +79,10 @@ impl fmt::Debug for Cont {
         match self {
             Cont::EvalExpr(expr, _, k) => write!(f, "<EvalExpr {} {:?}>", expr, k),
             Cont::BeginFunc(expr, _, k) => write!(f, "<BeginFunc {} {:?}>", expr, k),
-            Cont::EvalFunc(Value::Procedure(Procedure::NativePr(name)), rest, acc, _env, k) => {
+            Cont::EvalFunc(Value::Procedure(Procedure::Native(name)), rest, acc, _env, k) => {
                 write!(f, "<EvalFunc native={} rest={} acc={} {:?}>", name, rest, acc, k)
             }
-            Cont::EvalFunc(Value::Procedure(Procedure::UserPr(_, _, _)), rest, acc, _env, k) => {
+            Cont::EvalFunc(Value::Procedure(Procedure::User(_, _, _)), rest, acc, _env, k) => {
                 write!(f, "<EvalFunc user rest={} acc={} {:?}>", rest, acc, k)
             }
             Cont::EvalFunc(..) => write!(f, "<EvalFunc>"),
@@ -177,30 +177,27 @@ fn cont_special_def(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
             let body = cdr;
 
             env.borrow_mut()
-                .define(fn_name, Value::Procedure(Procedure::UserPr(arg_names, body, env.clone())))?;
+                .define(fn_name, Value::Procedure(Procedure::User(arg_names, body, env.clone())))?;
             Ok(Trampoline::Apply(null!(), *k))
         }
         _ => runtime_error!("Bad argument to define: {:?}", car),
     }
 }
 
+/// rest: args, body
 fn cont_special_lambda(rest: List, env: Rc<RefCell<Env>>, k: Cont) -> Result<Trampoline, RuntimeError> {
     let (arg_defns_raw, body) = shift_or_error!(rest, "Must provide at least two arguments to lambda");
     let arg_defns = arg_defns_raw.into_list()?;
-
     let arg_names = arg_defns
         .into_iter()
         .map(|v| v.into_symbol())
         .collect::<Result<Vec<String>, RuntimeError>>()?;
-
-    let f = Procedure::UserPr(arg_names, body, env);
-    Ok(Trampoline::Apply(Value::Procedure(f), k))
+    Ok(Trampoline::Apply(Value::Procedure(Procedure::User(arg_names, body, env)), k))
 }
 
 fn cont_special_let(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
     let (arg_def_raws, body) = shift_or_error!(rest, "Must provide at least two arguments to let");
     let arg_defs = arg_def_raws.into_list()?;
-
     let proc_env = Env::new_child(env.clone()); // 创建一个新的环境，用于存放 let 绑定的变量
     match arg_defs.is_empty() {
         true => eval(body, env, k), // 执行 body
@@ -210,16 +207,6 @@ fn cont_special_let(rest: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<T
                 Trampoline::Bounce(def_val, env, Cont::EvalLet(def_key.into_symbol()?, rest_defs, body, proc_env, k))
             })
         }
-    }
-}
-
-fn cont_eval_let(name: String, value: Value, rest: List, body: List, env: Rc<RefCell<Env>>, k: Box<Cont>) -> Result<Trampoline, RuntimeError> {
-    env.borrow_mut().define(name, value)?; // define variable in let scope
-    match rest.shift() {
-        Some((next_defn, rest_defns)) => match_list!(next_defn.into_list()?, [defn_key, defn_val] => {
-            Trampoline::Bounce(defn_val, env.clone(), Cont::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k))
-        }),
-        None => eval(body, Env::new_child(env), k),
     }
 }
 
@@ -300,15 +287,13 @@ impl Cont {
                 }
 
                 _ => match rest.shift() {
-                    // val 是函数（native/user), rest 函数的参数
-                    // 然后跳转到函数的求值
+                    // val 是函数（native/user), rest 函数的参数。 然后跳转到函数的求值。
                     Some((car, cdr)) => Ok(Trampoline::Bounce(car, env.clone(), Cont::EvalFunc(val, cdr, List::Null, env, k))),
                     None => apply(val, List::Null, k),
                 },
             },
 
-            // 函数调用
-            // 先依次对参数求值，放到 acc 中，然后 apply
+            // 函数调用: 先依次对参数求值，放到 acc 中，然后 apply
             Cont::EvalFunc(f, rest, acc, env, k) => {
                 let acc2 = acc.unshift(val);
                 match rest.shift() {
@@ -334,7 +319,15 @@ impl Cont {
                 Ok(Trampoline::Apply(null!(), *k))
             }
 
-            Cont::EvalLet(name, rest, body, env, k) => cont_eval_let(name, val, rest, body, env, k),
+            Cont::EvalLet(name, rest, body, env, k) => {
+                env.borrow_mut().define(name, val)?; // define variable in let scope
+                match rest.shift() {
+                    Some((next_defn, rest_defns)) => match_list!(next_defn.into_list()?, [defn_key, defn_val] => {
+                        Trampoline::Bounce(defn_val, env.clone(), Cont::EvalLet(defn_key.into_symbol()?, rest_defns, body, env, k))
+                    }),
+                    None => eval(body, Env::new_child(env), k),
+                }
+            }
 
             Cont::ContinueQuasiquote(rest, acc, env, k) => cont_continue_quasiquote(val, rest, acc, env, k),
 
@@ -370,8 +363,8 @@ fn apply(val: Value, args: List, k: Box<Cont>) -> Result<Trampoline, RuntimeErro
     match val {
         Value::Cont(c) => Ok(Trampoline::Apply(args.into_list(), *c)),
 
-        Value::Procedure(Procedure::NativePr(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
-        Value::Procedure(Procedure::UserPr(formals, body, env)) => {
+        Value::Procedure(Procedure::Native(f)) => Ok(Trampoline::Apply(primitive(f, args)?, *k)),
+        Value::Procedure(Procedure::User(formals, body, env)) => {
             if formals.len() != args.len() {
                 runtime_error!("Must supply exactly {} arguments to function: {:?}", formals.len(), args);
             }

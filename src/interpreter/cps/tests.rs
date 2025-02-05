@@ -782,7 +782,7 @@ mod test_cps {
     fn test_native_fn_as_value() {
         // runTest + => #<procedure:+>
         let i = vec![Value::Symbol("+".to_string())];
-        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Procedure::NativePr("+")));
+        assert_eq!(exec(List::from_vec(i)).unwrap(), Value::Procedure(Procedure::Native("+")));
     }
 
     #[test]
